@@ -41,6 +41,7 @@ deviceId:lsGet("tk_device_id","")||(() =>{let id=uuid();localStorage.setItem("tk
 linkedDevices:{},fileSyncOn:lsGet("tk_filesync","1")==="1",largeFileSkip:lsGet("tk_largeskip","1")==="1",
 fileTransfers:{}
 };
+let gifDebounce=null;
 
 let ICE_SERVERS=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"},{urls:"stun:stun2.l.google.com:19302"},{urls:"stun:stun3.l.google.com:19302"},{urls:"stun:openrelay.metered.ca:80"},{urls:"turn:openrelay.metered.ca:80",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443?transport=tcp",username:"openrelayproject",credential:"openrelayproject"}];
 
@@ -406,6 +407,38 @@ async function showEditHistory(msgId){
   openModal("edit-history-modal");
 }
 
+function ensureActiveChatForAttachment(){
+  if(S.activeChat)return true;
+  toast("Open a chat first to send attachments");
+  return false;
+}
+function toggleAttachMenu(event){
+  event?.stopPropagation();
+  if(!ensureActiveChatForAttachment())return;
+  closeGifPicker();
+  document.getElementById("attach-menu")?.classList.toggle("open");
+}
+function closeAttachMenu(){document.getElementById("attach-menu")?.classList.remove("open")}
+function triggerFileInput(inputId){
+  if(!ensureActiveChatForAttachment())return;
+  closeAttachMenu();
+  closeGifPicker();
+  document.getElementById(inputId)?.click();
+}
+function openAttachmentFavorites(){
+  if(!ensureActiveChatForAttachment())return;
+  closeAttachMenu();
+  closeGifPicker();
+  openFavoritesPanel();
+}
+function openGifPicker(){
+  if(!ensureActiveChatForAttachment())return;
+  closeAttachMenu();
+  let p=document.getElementById("gif-picker");
+  p.classList.add("open");
+  loadTrendingGifs();
+}
+
 // File transfer
 const CHUNK=16384;
 function fileIcon(type){if(!type)return "📎";if(type.startsWith("image/"))return "🖼️";if(type.startsWith("video/"))return "🎬";if(type.startsWith("audio/"))return "🎵";if(type.includes("pdf"))return "📄";if(type.includes("zip")||type.includes("compressed"))return "🗜️";return "📎"}
@@ -511,7 +544,7 @@ async function sendFavorite(id){
 }
 
 const GIF_KEY="LIVDSRZULELA";
-function toggleGifPicker(){let p=document.getElementById("gif-picker");p.classList.toggle("open");if(p.classList.contains("open"))loadTrendingGifs()}
+function toggleGifPicker(event){event?.stopPropagation();if(!ensureActiveChatForAttachment())return;let p=document.getElementById("gif-picker");closeAttachMenu();p.classList.toggle("open");if(p.classList.contains("open"))loadTrendingGifs()}
 function closeGifPicker(){document.getElementById("gif-picker").classList.remove("open")}
 function gifTab(tab,el){document.querySelectorAll(".gif-picker-tab").forEach(t=>t.classList.remove("active"));el.classList.add("active");if(tab==="favorites")loadFavGifs();else loadTrendingGifs()}
 async function loadTrendingGifs(){
@@ -598,5 +631,5 @@ function toggleLargeSkip(el){S.largeFileSkip=!S.largeFileSkip;el.classList.toggl
   document.getElementById("ctx-copy-id").onclick=()=>S.ctxTarget&&copyToClip(S.ctxTarget);
   document.getElementById("ctx-remove").onclick=()=>S.ctxTarget&&removeFriend(S.ctxTarget);
   let join=new URLSearchParams(location.search).get("join");if(join)setTimeout(()=>{document.getElementById("af-id-input").value=join;addFriendById()},1500);
-  document.addEventListener("click",e=>{if(!e.target.closest(".attach-btn")&&!e.target.closest(".attach-menu"))document.getElementById("attach-menu").classList.remove("open");if(!e.target.closest(".gif-picker")&&!e.target.closest(".attach-btn"))document.getElementById("gif-picker").classList.remove("open");if(!e.target.closest(".ctx-menu"))document.getElementById("ctx-menu").classList.remove("open")});
+  document.addEventListener("click",e=>{if(!e.target.closest(".attach-btn")&&!e.target.closest(".attach-menu"))document.getElementById("attach-menu").classList.remove("open");if(!e.target.closest(".gif-picker")&&!e.target.closest(".attach-btn")&&!e.target.closest(".attach-menu"))document.getElementById("gif-picker").classList.remove("open");if(!e.target.closest(".ctx-menu"))document.getElementById("ctx-menu").classList.remove("open")});
 })();

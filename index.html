@@ -40,6 +40,31 @@
 
 <div id="mob-action-sheet">
   <div class="sheet-handle"></div>
+  <div style="padding:14px 20px 6px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Send</div>
+  <div class="action-item" onclick="(closeActionSheet(),triggerFileInput('img-input'))">
+    <div class="ai-icon">🖼️</div>
+    <div>
+      <div class="ai-title">Upload Image</div>
+      <div class="ai-desc">Choose a photo, video, or GIF from your device.</div>
+    </div>
+  </div>
+  <div class="action-sep"></div>
+  <div class="action-item" onclick="(closeActionSheet(),openGifPicker())">
+    <div class="ai-icon">🎞️</div>
+    <div>
+      <div class="ai-title">Send GIF</div>
+      <div class="ai-desc">Search trending GIFs or send a saved one.</div>
+    </div>
+  </div>
+  <div class="action-sep"></div>
+  <div class="action-item" onclick="(closeActionSheet(),openAttachmentFavorites())">
+    <div class="ai-icon">⭐</div>
+    <div>
+      <div class="ai-title">Favorites</div>
+      <div class="ai-desc">Quick send your favorited images and GIFs.</div>
+    </div>
+  </div>
+  <div class="action-sep"></div>
   <div style="padding:14px 20px 6px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Quick Actions</div>
   <div class="action-item" onclick="(closeActionSheet(),openModal('add-friend-modal'))">
     <div class="ai-icon">➕</div>
@@ -135,17 +160,17 @@
         </div>
 
         <div class="attach-menu" id="attach-menu">
-          <div class="attach-item" onclick="document.getElementById('file-input').click();closeAttachMenu()">
+          <div class="attach-item" onclick="triggerFileInput('file-input')">
             <span class="ai">📎</span> Upload File
           </div>
-          <div class="attach-item" onclick="document.getElementById('img-input').click();closeAttachMenu()">
+          <div class="attach-item" onclick="triggerFileInput('img-input')">
             <span class="ai">🖼️</span> Upload Image
           </div>
-          <div class="attach-item" onclick="toggleGifPicker()">
+          <div class="attach-item" onclick="toggleGifPicker(event)">
             <span class="ai">🎞️</span> GIFs
           </div>
           <div class="attach-sep"></div>
-          <div class="attach-item" onclick="openFavoritesPanel();closeAttachMenu()">
+          <div class="attach-item" onclick="openAttachmentFavorites()">
             <span class="ai">⭐</span> Favorites
           </div>
         </div>
