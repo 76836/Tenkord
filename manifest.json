@@ -1,8 +1,8 @@
 {
   "name": "Tenkord",
   "short_name": "Tenkord",
-  "description": "Secure P2P messaging with cross-device sync",
-  "start_url": "/tenkord-v3.html",
+  "description": "Fake Discord.",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#f5c400",
