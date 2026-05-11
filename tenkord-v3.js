@@ -39,7 +39,7 @@ peerReady:!1,signalingOk:!1,
 replyTo:null,editMsg:null,
 deviceId:lsGet("tk_device_id","")||(() =>{let id=uuid();localStorage.setItem("tk_device_id",id);return id})(),
 linkedDevices:{},fileSyncOn:lsGet("tk_filesync","1")==="1",largeFileSkip:lsGet("tk_largeskip","1")==="1",
-fileTransfers:{}
+fileTransfers:{},pendingIdentityImport:null,identityPassMode:null
 };
 let gifDebounce=null;
 
@@ -76,7 +76,17 @@ function setLoader(e,t){var n=document.getElementById("fullscreen-loader");if(t)
 // === Queue ===
 function addToQueue(e,t){S.queue[e]=S.queue[e]||[];S.queue[e].push(t);localStorage.setItem("tk_queue",JSON.stringify(S.queue));renderQueue()}
 function renderQueue(){let el=document.getElementById("chat-queue-area");if(!el)return;if(S.activeChat&&S.queue[S.activeChat.id]?.length){let n=S.queue[S.activeChat.id].length;el.innerHTML=`<div class="queue-warning"><span>🕒 ${n} message${n>1?"s":""} queued (offline)</span><span class="queue-cancel" onclick="clearQueue('${S.activeChat.id}')">Cancel all</span></div>`}else el.innerHTML=""}
-function clearQueue(e){delete S.queue[e];localStorage.setItem("tk_queue",JSON.stringify(S.queue));renderQueue()}
+async function cleanupMessageFile(msg){
+  if(!msg)return;
+  let fileId=msg.fileId||((msg.mediaUrl||msg.fileName||msg.fileType)?msg.id:null);
+  if(fileId)await dbDel("files",fileId);
+}
+async function removeQueuedMessage(packet){
+  if(!packet?.msgId||packet.type!=="dm")return;
+  let msg=await dbGet("messages",packet.msgId);
+  if(msg?.self){await cleanupMessageFile(msg);await dbDel("messages",packet.msgId)}
+}
+async function clearQueue(e){let q=S.queue[e]||[];delete S.queue[e];localStorage.setItem("tk_queue",JSON.stringify(S.queue));for(let m of q)await removeQueuedMessage(m);renderQueue();if(S.activeChat?.id===e)renderMessages()}
 async function processQueue(t){let c=S.conns[t];if(c?.open&&S.queue[t]){let q=S.queue[t];delete S.queue[t];localStorage.setItem("tk_queue",JSON.stringify(S.queue));renderQueue();q.forEach(m=>send(c,m))}}
 
 // === Cross-device sync ===
@@ -148,7 +158,8 @@ async function handleData(t,n){
       if(!f?.pubKey)break;
       let verified=await CRYPTO.verify("delete"+n.msgId+n.ts,n.sig,f.pubKey);
       if(!verified)break;
-      msg.deleted=true;msg.text="[Message deleted]";
+      await cleanupMessageFile(msg);
+      msg.deleted=true;msg.text="[Message deleted]";msg.mediaUrl=null;msg.fileId=null;
       await dbPut("messages",msg);
       if(S.activeChat?.id===t)rerenderMsg(msg);
       break;
@@ -226,7 +237,8 @@ async function deleteMsg(msgId){
   let msg=await dbGet("messages",msgId);
   if(!msg||!msg.self)return;
   let ts=Date.now(),sig=await CRYPTO.sign("delete"+msgId+ts);
-  msg.deleted=true;msg.text="[Message deleted]";
+  await cleanupMessageFile(msg);
+  msg.deleted=true;msg.text="[Message deleted]";msg.mediaUrl=null;msg.fileId=null;
   await dbPut("messages",msg);rerenderMsg(msg);
   let chatId=msg.chatId,packet={type:"delete-msg",msgId,author:S.myName,ts,sig};
   let conn=S.conns[chatId];
@@ -612,12 +624,35 @@ function genQR(){if(S.myId){let e=document.getElementById("qr-cont");e.innerHTML
 async function startQRScan(){let t=document.getElementById("qr-scan-area"),r=document.getElementById("qr-video");t.style.display="block";try{S.qrStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});r.srcObject=S.qrStream;if("BarcodeDetector"in window){let n=new BarcodeDetector({formats:["qr_code"]}),a=async()=>{if(S.qrStream){try{let e=await n.detect(r);if(e.length){let t=parsePeerLink(e[0].rawValue);if(t){S.qrScannedId=t;document.getElementById("qr-scanned-display").textContent=t;document.getElementById("qr-result").style.display="block";stopQRScan();return}}}catch(e){}setTimeout(a,500)}};r.onloadeddata=a}else toast("QR scanning not supported")}catch(e){toast("Camera denied");t.style.display="none"}}
 function stopQRScan(){if(S.qrStream){S.qrStream.getTracks().forEach(e=>e.stop());S.qrStream=null}}
 function connectScannedQR(){if(S.qrScannedId){S.friends[S.qrScannedId]=S.friends[S.qrScannedId]||{name:S.qrScannedId.slice(-8),avatar:"",status:"",online:false,pending:false,unread:0};save();connectTo(S.qrScannedId);setLoader(false)}}
-function startImportScan(){document.getElementById("qr-scan-overlay").classList.add("open")}
-function stopImportScan(){document.getElementById("qr-scan-overlay").classList.remove("open");stopQRScan()}
-
-async function exportIdentity(){let e=document.getElementById("export-pass").value;if(!e||e.length<6)return toast("Passphrase must be 6+ chars");try{let t=await CRYPTO.exportBundle(e,{name:S.myName,status:S.myStatus,avatar:S.myAvatar}),n=new Blob([t],{type:"application/json"}),a=URL.createObjectURL(n),r=document.createElement("a");r.href=a;r.download=`tenkord-identity.json`;r.click();URL.revokeObjectURL(a);toast("Identity exported!")}catch(e){toast("Export failed: "+e.message)}}
-async function exportIdentityQR(){let e=document.getElementById("export-pass").value;if(e.length<4)return toast("Passphrase too short");try{let t=await CRYPTO.exportBundle(e,{name:S.myName,avatar:S.myAvatar});document.getElementById("transfer-qr-cont").innerHTML="";new QRCode(document.getElementById("transfer-qr-cont"),{text:"tk-bundle:"+t,width:200,height:200});document.getElementById("transfer-qr-cont").style.display="block"}catch(e){toast("Export failed")}}
-async function importIdentity(){let e=document.getElementById("import-bundle").value.trim(),t=document.getElementById("import-pass").value;if(!e||!t)return toast("Fill all fields");if(!confirm("Replace identity?"))return;try{let n=await CRYPTO.importBundle(e,t);location.reload()}catch(e){toast("Import failed")}}
+function openIdentityPassModal(mode){
+  S.identityPassMode=mode;
+  let title=document.getElementById("identity-pass-title"),help=document.getElementById("identity-pass-help"),btn=document.getElementById("identity-pass-confirm"),inp=document.getElementById("identity-pass-input");
+  title.textContent=mode==="export"?"Export Identity":"Import Identity";
+  help.textContent=mode==="export"?"Choose a passphrase to encrypt your exported JSON identity bundle.":"Enter the passphrase used when this JSON identity bundle was exported.";
+  btn.textContent=mode==="export"?"Export JSON":"Import Identity";
+  inp.value="";inp.autocomplete=mode==="export"?"new-password":"current-password";
+  openModal("identity-pass-modal");setTimeout(()=>inp.focus(),80);
+}
+function closeIdentityPassModal(){closeModal("identity-pass-modal");S.identityPassMode=null}
+function openIdentityExportModal(){openIdentityPassModal("export")}
+function triggerIdentityImportFile(){document.getElementById("identity-import-file")?.click()}
+function handleIdentityImportFile(event){
+  let file=event.target.files[0];event.target.value="";
+  if(!file)return;
+  let reader=new FileReader();
+  reader.onload=e=>{S.pendingIdentityImport=e.target.result;openIdentityPassModal("import")};
+  reader.onerror=()=>toast("Could not read identity file");
+  reader.readAsText(file);
+}
+async function confirmIdentityPass(){
+  let pass=document.getElementById("identity-pass-input")?.value||"";
+  if(!pass||pass.length<6)return toast("Passphrase must be 6+ chars");
+  if(S.identityPassMode==="export")return exportIdentity(pass);
+  if(S.identityPassMode==="import")return importIdentity(pass);
+}
+async function exportIdentity(pass){try{let t=await CRYPTO.exportBundle(pass,{name:S.myName,status:S.myStatus,avatar:S.myAvatar}),n=new Blob([t],{type:"application/json"}),a=URL.createObjectURL(n),r=document.createElement("a");r.href=a;r.download=`tenkord-identity.json`;r.click();URL.revokeObjectURL(a);closeIdentityPassModal();toast("Identity exported!")}catch(e){toast("Export failed: "+e.message)}}
+async function importIdentity(pass){let e=S.pendingIdentityImport;if(!e||!pass)return toast("Choose an identity JSON file first");if(!confirm("Replace identity?"))return;try{await CRYPTO.importBundle(e,pass);S.pendingIdentityImport=null;closeIdentityPassModal();location.reload()}catch(e){toast("Import failed")}}
+Object.assign(window,{openIdentityPassModal,closeIdentityPassModal,openIdentityExportModal,triggerIdentityImportFile,handleIdentityImportFile,confirmIdentityPass,exportIdentity,importIdentity});
 function toggleFileSyncSetting(el){S.fileSyncOn=!S.fileSyncOn;el.classList.toggle("on",S.fileSyncOn);localStorage.setItem("tk_filesync",S.fileSyncOn?"1":"0")}
 function toggleLargeSkip(el){S.largeFileSkip=!S.largeFileSkip;el.classList.toggle("on",S.largeFileSkip);localStorage.setItem("tk_largeskip",S.largeFileSkip?"1":"0")}
 

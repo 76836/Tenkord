@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<link rel="stylesheet" href="tenkord-v3.css">
+<link rel="stylesheet" href="tenkord-v3.css?v=4">
 </head>
 <body>
 <div id="toast"></div>
@@ -40,31 +40,6 @@
 
 <div id="mob-action-sheet">
   <div class="sheet-handle"></div>
-  <div style="padding:14px 20px 6px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Send</div>
-  <div class="action-item" onclick="(closeActionSheet(),triggerFileInput('img-input'))">
-    <div class="ai-icon">🖼️</div>
-    <div>
-      <div class="ai-title">Upload Image</div>
-      <div class="ai-desc">Choose a photo, video, or GIF from your device.</div>
-    </div>
-  </div>
-  <div class="action-sep"></div>
-  <div class="action-item" onclick="(closeActionSheet(),openGifPicker())">
-    <div class="ai-icon">🎞️</div>
-    <div>
-      <div class="ai-title">Send GIF</div>
-      <div class="ai-desc">Search trending GIFs or send a saved one.</div>
-    </div>
-  </div>
-  <div class="action-sep"></div>
-  <div class="action-item" onclick="(closeActionSheet(),openAttachmentFavorites())">
-    <div class="ai-icon">⭐</div>
-    <div>
-      <div class="ai-title">Favorites</div>
-      <div class="ai-desc">Quick send your favorited images and GIFs.</div>
-    </div>
-  </div>
-  <div class="action-sep"></div>
   <div style="padding:14px 20px 6px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Quick Actions</div>
   <div class="action-item" onclick="(closeActionSheet(),openModal('add-friend-modal'))">
     <div class="ai-icon">➕</div>
@@ -77,8 +52,8 @@
   <div class="action-item" onclick="(closeActionSheet(),openModal('profile-modal'))">
     <div class="ai-icon">📱</div>
     <div>
-      <div class="ai-title">View My QR</div>
-      <div class="ai-desc">Share your account with others</div>
+      <div class="ai-title">Profile</div>
+      <div class="ai-desc">Edit your profile and account settings</div>
     </div>
   </div>
   <div class="action-sep"></div>
@@ -238,25 +213,13 @@
       </div>
 
       <div class="tpane" id="tab-pm-devices">
-        <div class="info-box">Link this account to another device. Export your identity bundle (encrypted with a passphrase), then import it on your other device.</div>
-        <div style="margin-bottom:14px">
-          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Export Identity</div>
-          <div class="form-grp"><label>Passphrase (to encrypt)</label><input autocomplete="new-password" id="export-pass" placeholder="Choose a strong passphrase" type="password"/></div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-block" onclick="exportIdentity()">⬇️ Save JSON</button>
-            <button class="btn btn-block btn-outline" onclick="exportIdentityQR()">📱 Show QR</button>
-          </div>
-          <div id="transfer-qr-cont"></div>
+        <div class="info-box">Link this account to another device with an encrypted JSON identity bundle.</div>
+        <input accept="application/json,.json" id="identity-import-file" onchange="handleIdentityImportFile(event)" style="display:none" type="file"/>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn btn-block btn-outline" onclick="triggerIdentityImportFile()">⬆️ Import JSON</button>
+          <button class="btn btn-block" onclick="openIdentityExportModal()">⬇️ Export JSON</button>
         </div>
-        <div class="divider">or import on this device</div>
-        <div>
-          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Import Identity</div>
-          <div class="warn-box" style="font-size:10px">⚠️ Importing will replace your current identity on this device.</div>
-          <div class="form-grp"><label>Identity Bundle (JSON)</label><textarea class="fi" id="import-bundle" placeholder="Paste exported bundle JSON..." rows="3"></textarea></div>
-          <div style="margin-bottom:10px"><button class="btn btn-block btn-outline" onclick="startImportScan()">📷 Scan Transfer QR</button></div>
-          <div class="form-grp"><label>Passphrase</label><input autocomplete="current-password" id="import-pass" placeholder="Passphrase used when exporting" type="password"/></div>
-          <button class="btn btn-block btn-outline" onclick="importIdentity()">⬆️ Import Identity Bundle</button>
-        </div>
+        <div class="warn-box" style="font-size:10px;margin-top:12px">⚠️ Importing will replace your current identity on this device.</div>
       </div>
 
       <div class="tpane" id="tab-pm-sync">
@@ -362,17 +325,22 @@
   </div>
 </div>
 
+<div class="overlay" id="identity-pass-modal">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-hdr"><h3 id="identity-pass-title">Identity Passphrase</h3><button class="modal-close" onclick="closeIdentityPassModal()">❌</button></div>
+    <div class="modal-body">
+      <div class="info-box" id="identity-pass-help">Enter the passphrase for this identity bundle.</div>
+      <div class="form-grp"><label>Passphrase</label><input autocomplete="current-password" id="identity-pass-input" placeholder="Enter passphrase" type="password" onkeydown="if(event.key==='Enter')confirmIdentityPass()"/></div>
+      <button class="btn btn-block" id="identity-pass-confirm" onclick="confirmIdentityPass()">Continue</button>
+    </div>
+  </div>
+</div>
+
 <div class="media-lightbox" id="media-lightbox" onclick="closeLightbox()">
   <button class="media-lightbox-close" onclick="closeLightbox()">❌</button>
   <div id="lightbox-content"></div>
 </div>
 
-<div id="qr-scan-overlay" class="qr-scan-overlay">
-  <video id="import-qr-video" playsinline></video>
-  <div style="position:fixed;bottom:20px;left:0;right:0;text-align:center">
-    <button class="btn btn-sm" onclick="stopImportScan()">Cancel Scan</button>
-  </div>
-</div>
 
 <div id="fullscreen-loader">
   <div class="loader-content">
@@ -381,7 +349,7 @@
   </div>
 </div>
 
-<script src="tenkord-v3.js"></script>
+<script src="tenkord-v3.js?v=4"></script>
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').then(r=>console.log('SW registered')).catch(e=>console.warn('SW failed',e)));
