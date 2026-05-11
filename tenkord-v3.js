@@ -652,7 +652,6 @@ async function confirmIdentityPass(){
 }
 async function exportIdentity(pass){try{let t=await CRYPTO.exportBundle(pass,{name:S.myName,status:S.myStatus,avatar:S.myAvatar}),n=new Blob([t],{type:"application/json"}),a=URL.createObjectURL(n),r=document.createElement("a");r.href=a;r.download=`tenkord-identity.json`;r.click();URL.revokeObjectURL(a);closeIdentityPassModal();toast("Identity exported!")}catch(e){toast("Export failed: "+e.message)}}
 async function importIdentity(pass){let e=S.pendingIdentityImport;if(!e||!pass)return toast("Choose an identity JSON file first");if(!confirm("Replace identity?"))return;try{await CRYPTO.importBundle(e,pass);S.pendingIdentityImport=null;closeIdentityPassModal();location.reload()}catch(e){toast("Import failed")}}
-Object.assign(window,{openIdentityPassModal,closeIdentityPassModal,openIdentityExportModal,triggerIdentityImportFile,handleIdentityImportFile,confirmIdentityPass,exportIdentity,importIdentity});
 function toggleFileSyncSetting(el){S.fileSyncOn=!S.fileSyncOn;el.classList.toggle("on",S.fileSyncOn);localStorage.setItem("tk_filesync",S.fileSyncOn?"1":"0")}
 function toggleLargeSkip(el){S.largeFileSkip=!S.largeFileSkip;el.classList.toggle("on",S.largeFileSkip);localStorage.setItem("tk_largeskip",S.largeFileSkip?"1":"0")}
 
