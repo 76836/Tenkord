@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" name="viewport"/>
+<title>Tenkord v3.0</title>
+<meta name="theme-color" content="#f5c400">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tenkord">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="stylesheet" href="tenkord-v3.css">
+</head>
+<body>
+<div id="toast"></div>
+<div id="sheet-backdrop" onclick="closeAllSheets()"></div>
+
+<div class="ctx-menu" id="ctx-menu">
+  <div class="ctx-item" id="ctx-profile">👤 View Profile</div>
+  <div class="ctx-item" id="ctx-dm">✉️ Message</div>
+  <div class="ctx-item" id="ctx-copy-id">🔗 Copy Peer ID</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="ctx-remove">❌ Remove</div>
+</div>
+
+<div class="ctx-menu" id="msg-ctx-menu">
+  <div class="ctx-item" id="mctx-reply">↩️ Reply</div>
+  <div class="ctx-item" id="mctx-edit">📝 Edit</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" id="mctx-delete">🗑️ Delete</div>
+</div>
+
+<div id="mob-members-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">Members</div>
+  <div class="sheet-body" id="mob-members-body"></div>
+</div>
+
+<div id="mob-action-sheet">
+  <div class="sheet-handle"></div>
+  <div style="padding:14px 20px 6px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Quick Actions</div>
+  <div class="action-item" onclick="(closeActionSheet(),openModal('add-friend-modal'))">
+    <div class="ai-icon">➕</div>
+    <div>
+      <div class="ai-title">Add Friend</div>
+      <div class="ai-desc">Connect via ID, or scan a QR code.</div>
+    </div>
+  </div>
+  <div class="action-sep"></div>
+  <div class="action-item" onclick="(closeActionSheet(),openModal('profile-modal'))">
+    <div class="ai-icon">📱</div>
+    <div>
+      <div class="ai-title">View My QR</div>
+      <div class="ai-desc">Share your account with others</div>
+    </div>
+  </div>
+  <div class="action-sep"></div>
+  <div class="action-item" onclick="closeActionSheet()">
+    <div class="ai-icon">❌</div>
+    <div><div class="ai-title">Cancel</div></div>
+  </div>
+</div>
+
+<div id="p2p-bar">
+  <span class="logo">TENKORD</span>
+  <div class="sig-area">
+    <span class="sync-badge" id="sync-status" style="display:none">SYNCING</span>
+    <div class="sdot-sm" id="sig-dot"></div>
+    <span id="sig-lbl">initializing...</span>
+  </div>
+</div>
+
+<div id="app-wrap">
+  <div id="left-panel">
+    <div id="home-panel" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+      <div class="panel-hdr">
+        <h2>Friends</h2>
+        <button class="icon-btn" onclick="openModal('add-friend-modal')" title="Add Friend">➕</button>
+      </div>
+      <div class="panel-scroll" id="friend-list-panel"></div>
+      <div class="user-bar">
+        <div class="av" id="ub-av" style="width:34px;height:34px;font-size:14px"><span class="sdot online"></span></div>
+        <div class="ub-info">
+          <div class="ub-name" id="ub-name"></div>
+          <div class="ub-id" id="ub-id">connecting...</div>
+        </div>
+        <button class="icon-btn" onclick="openModal('profile-modal')" title="Edit Profile">➕</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="chat-hdr">
+      <button class="back-btn" onclick="goBack()">⬅️</button>
+      <div style="flex:1;overflow:hidden">
+        <div class="hdr-name" id="hdr-name"></div>
+        <div class="hdr-sub" id="hdr-sub"></div>
+      </div>
+      <div style="display:flex;gap:3px">
+        <button class="icon-btn" onclick="openMembersPanel()" title="Members">👥</button>
+      </div>
+    </div>
+
+    <div id="friends-home">
+      <div class="fh-hdr">
+        <h2>Friends</h2>
+        <div class="fh-tabs">
+          <div class="fh-tab active" onclick="setFhTab('all',this)">All</div>
+          <div class="fh-tab" onclick="setFhTab('online',this)">Online</div>
+          <div class="fh-tab" onclick="setFhTab('pending',this)">Pending</div>
+        </div>
+      </div>
+      <div class="fh-body" id="fh-body"></div>
+    </div>
+
+    <div id="chat-view">
+      <div id="messages"></div>
+      <div id="chat-queue-area"></div>
+      <div class="typing-bar" id="typing-bar"></div>
+      <div id="reply-bar-area"></div>
+      <div id="edit-bar-area"></div>
+      <div id="input-area">
+        <div class="gif-picker" id="gif-picker">
+          <div class="gif-picker-hdr">
+            <input id="gif-search" placeholder="Search GIFs..." oninput="searchGifs(this.value)">
+            <button onclick="closeGifPicker()">❌</button>
+          </div>
+          <div class="gif-picker-tabs">
+            <div class="gif-picker-tab active" onclick="gifTab('trending',this)">Trending</div>
+            <div class="gif-picker-tab" onclick="gifTab('favorites',this)">⭐ Favorites</div>
+          </div>
+          <div class="gif-grid" id="gif-grid"></div>
+        </div>
+
+        <div class="attach-menu" id="attach-menu">
+          <div class="attach-item" onclick="document.getElementById('file-input').click();closeAttachMenu()">
+            <span class="ai">📎</span> Upload File
+          </div>
+          <div class="attach-item" onclick="document.getElementById('img-input').click();closeAttachMenu()">
+            <span class="ai">🖼️</span> Upload Image
+          </div>
+          <div class="attach-item" onclick="toggleGifPicker()">
+            <span class="ai">🎞️</span> GIFs
+          </div>
+          <div class="attach-sep"></div>
+          <div class="attach-item" onclick="openFavoritesPanel();closeAttachMenu()">
+            <span class="ai">⭐</span> Favorites
+          </div>
+        </div>
+
+        <input type="file" id="file-input" style="display:none" onchange="handleFileUpload(event)">
+        <input type="file" id="img-input" accept="image/*,video/*,.gif" style="display:none" onchange="handleFileUpload(event)">
+        <div class="input-wrap">
+          <button class="attach-btn" onclick="toggleAttachMenu()" title="Attach">➕</button>
+          <textarea id="msg-input" oninput="(resizeTA(this),sendTyping())" onkeydown="handleKey(event)" placeholder="Message..." rows="1"></textarea>
+          <button class="send-btn" onclick="sendMsg()">🚀</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="members-panel">
+    <div class="mp-sec">Online</div>
+    <div id="mp-on"></div>
+    <div class="mp-sec" style="margin-top:6px">Offline</div>
+    <div id="mp-off"></div>
+  </div>
+</div>
+
+<nav id="mob-nav">
+  <button class="mob-nav-item active" id="mob-tab-home" onclick="mobNav('home')">
+    <span class="mni-icon">🏠</span><span class="mni-label">Friends</span>
+    <span class="mob-nav-badge" id="mob-unread-badge" style="display:none">0</span>
+  </button>
+  <button class="mob-nav-item" id="mob-tab-new" onclick="openActionSheet()">
+    <span class="mni-icon" style="font-size:26px;font-weight:800;color:var(--y)">➕</span><span class="mni-label">New</span>
+  </button>
+  <button class="mob-nav-item" id="mob-tab-members" onclick="openMembersPanel()"><span class="mni-icon">👥</span><span class="mni-label">Online</span></button>
+  <button class="mob-nav-item" id="mob-tab-profile" onclick="openModal('profile-modal')"><span class="mni-icon">👤</span><span class="mni-label">Profile</span></button>
+</nav>
+
+<div class="overlay" id="profile-modal">
+  <div class="modal">
+    <div class="modal-hdr"><h3>Your Profile</h3><button class="modal-close" onclick="closeModal('profile-modal')">❌</button></div>
+    <div class="modal-tabs">
+      <div class="mtab active" data-tab="pm-profile" onclick="switchTab(this,'profile-modal')">Profile</div>
+      <div class="mtab" data-tab="pm-devices" onclick="switchTab(this,'profile-modal')">Linked Devices</div>
+      <div class="mtab" data-tab="pm-sync" onclick="switchTab(this,'profile-modal')">Sync</div>
+    </div>
+    <div class="modal-body">
+      <div class="tpane active" id="tab-pm-profile">
+        <div class="av-up-wrap">
+          <div class="av-up-btn" id="av-preview" onclick="document.getElementById('av-file').click()">
+            <span class="av-up-icon">📷</span><span class="av-up-lbl">Upload photo</span>
+          </div>
+          <input accept="image/*" id="av-file" onchange="handleAvUpload(event)" type="file"/>
+          <div style="flex:1">
+            <div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-bottom:5px">Or pick emoji:</div>
+            <div class="av-emoji-strip" id="av-emoji-strip"></div>
+            <div style="height:10px"></div>
+            <div style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">PEER ID</div>
+            <div id="pp-id" onclick="copyMyId()" style="font-family:var(--font-mono);font-size:10px;color:var(--y);cursor:pointer;word-break:break-all"></div>
+          </div>
+        </div>
+        <div class="form-grp"><label>Display Name</label><input id="p-name" maxlength="32" placeholder="Your name" type="text"/></div>
+        <div class="form-grp"><label>Status</label><input id="p-status" maxlength="64" placeholder="What's up?" type="text"/></div>
+        <button class="btn btn-block" onclick="saveProfile()">Save Profile</button>
+        <div class="divider">share your ID</div>
+        <div id="qr-cont"></div>
+        <div class="share-box" onclick="copyMyId()"><span class="ci">🔗</span><span id="pp-share-id"></span></div>
+      </div>
+
+      <div class="tpane" id="tab-pm-devices">
+        <div class="info-box">Link this account to another device. Export your identity bundle (encrypted with a passphrase), then import it on your other device.</div>
+        <div style="margin-bottom:14px">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Export Identity</div>
+          <div class="form-grp"><label>Passphrase (to encrypt)</label><input autocomplete="new-password" id="export-pass" placeholder="Choose a strong passphrase" type="password"/></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-block" onclick="exportIdentity()">⬇️ Save JSON</button>
+            <button class="btn btn-block btn-outline" onclick="exportIdentityQR()">📱 Show QR</button>
+          </div>
+          <div id="transfer-qr-cont"></div>
+        </div>
+        <div class="divider">or import on this device</div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px">Import Identity</div>
+          <div class="warn-box" style="font-size:10px">⚠️ Importing will replace your current identity on this device.</div>
+          <div class="form-grp"><label>Identity Bundle (JSON)</label><textarea class="fi" id="import-bundle" placeholder="Paste exported bundle JSON..." rows="3"></textarea></div>
+          <div style="margin-bottom:10px"><button class="btn btn-block btn-outline" onclick="startImportScan()">📷 Scan Transfer QR</button></div>
+          <div class="form-grp"><label>Passphrase</label><input autocomplete="current-password" id="import-pass" placeholder="Passphrase used when exporting" type="password"/></div>
+          <button class="btn btn-block btn-outline" onclick="importIdentity()">⬆️ Import Identity Bundle</button>
+        </div>
+      </div>
+
+      <div class="tpane" id="tab-pm-sync">
+        <div class="info-box">Manage cross-device sync and file transfer settings.</div>
+        <div id="device-list-area"></div>
+        <div style="height:12px"></div>
+        <div class="toggle-wrap">
+          <div><div class="toggle-label">Auto-sync files</div><div class="toggle-desc">Sync attached files across your devices</div></div>
+          <div class="toggle-switch on" id="toggle-file-sync" onclick="toggleFileSyncSetting(this)"></div>
+        </div>
+        <div class="toggle-wrap">
+          <div><div class="toggle-label">Skip files >10 MB</div><div class="toggle-desc">Don't auto-sync large files</div></div>
+          <div class="toggle-switch on" id="toggle-large-skip" onclick="toggleLargeSkip(this)"></div>
+        </div>
+        <div style="height:12px"></div>
+        <div class="import-section">
+          <h4>Import History from Friend</h4>
+          <div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-bottom:8px">If you set up a new device and can't sync with your other device, request chat history from a friend who has your conversations.</div>
+          <div class="form-grp"><label>Friend's Peer ID</label><input id="import-hist-peer" placeholder="tk-..." type="text"/></div>
+          <button class="btn btn-block btn-outline" onclick="requestHistoryFromFriend()">📥 Request History</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="add-friend-modal">
+  <div class="modal">
+    <div class="modal-hdr"><h3>Add Friend</h3><button class="modal-close" onclick="closeModal('add-friend-modal')">❌</button></div>
+    <div class="modal-tabs">
+      <div class="mtab active" data-tab="af-id" onclick="switchTab(this,'add-friend-modal')">Peer ID</div>
+      <div class="mtab" data-tab="af-link" onclick="switchTab(this,'add-friend-modal')">Link</div>
+      <div class="mtab" data-tab="af-qr" onclick="switchTab(this,'add-friend-modal')">QR Scan</div>
+    </div>
+    <div class="modal-body">
+      <div class="tpane active" id="tab-af-id">
+        <div class="info-box">Share your Peer ID (from Profile) with a friend. Paste theirs below.</div>
+        <label>Friend's Peer ID</label>
+        <input id="af-id-input" oninput="this.value=this.value.trim()" placeholder="tk-..." type="text"/>
+        <label>Nickname (optional)</label>
+        <input id="af-nick" maxlength="32" placeholder="e.g. Alice" type="text"/>
+        <button class="btn btn-block" onclick="addFriendById()">Send Friend Request</button>
+      </div>
+      <div class="tpane" id="tab-af-link">
+        <div class="info-box">Paste a tenkord:// invite link from a friend.</div>
+        <label>Invite Link</label>
+        <input id="af-link-input" oninput="this.value=this.value.trim()" placeholder="tenkord://peer/..." type="text"/>
+        <button class="btn btn-block" onclick="joinByLink()">Connect</button>
+        <div class="divider">your invite link</div>
+        <div class="share-box" onclick="copyMyInviteLink()"><span class="ci">🔗</span><span id="my-link-txt">loading...</span></div>
+      </div>
+      <div class="tpane" id="tab-af-qr">
+        <div class="info-box">Scan a friend's QR code from their Profile.</div>
+        <div style="text-align:center"><button class="btn" onclick="startQRScan()">📷 Open Camera</button></div>
+        <div id="qr-scan-area" style="margin-top:10px;display:none">
+          <video autoplay id="qr-video" playsinline style="width:100%;border-radius:7px;border:2px solid var(--y3)"></video>
+          <div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);text-align:center;margin-top:5px">Point camera at Tenkord QR</div>
+        </div>
+        <div id="qr-result" style="margin-top:10px;display:none">
+          <label>Scanned ID</label>
+          <div class="share-box" id="qr-scanned-display"></div>
+          <div style="height:8px"></div>
+          <button class="btn btn-block" onclick="connectScannedQR()">Connect</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="fp-modal">
+  <div class="modal" style="max-width:320px">
+    <div class="modal-hdr"><h3 id="fp-title">Profile</h3><button class="modal-close" onclick="closeModal('fp-modal')">❌</button></div>
+    <div class="modal-body" style="text-align:center;padding-top:18px">
+      <div class="av" id="fp-av" style="width:72px;height:72px;font-size:28px;margin:0 auto 12px"></div>
+      <div id="fp-name" style="font-size:18px;font-weight:800"></div>
+      <div id="fp-status" style="font-size:11px;color:var(--muted);font-family:var(--font-mono);margin-top:4px"></div>
+      <div id="fp-id" style="font-size:10px;color:var(--y3);font-family:var(--font-mono);margin-top:6px;word-break:break-all"></div>
+      <div style="height:4px"></div>
+      <div id="fp-ver" style="font-size:10px;font-family:var(--font-mono)"></div>
+      <div style="height:16px"></div>
+      <div style="display:flex;gap:8px;justify-content:center">
+        <button class="btn btn-sm" id="fp-dm-btn">✉️ Message</button>
+        <button class="btn btn-sm btn-outline" onclick="copyToClip(document.getElementById('fp-id').textContent)">🔗 Copy ID</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="edit-history-modal">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-hdr"><h3>Edit History</h3><button class="modal-close" onclick="closeModal('edit-history-modal')">❌</button></div>
+    <div class="modal-body" id="edit-history-body"></div>
+  </div>
+</div>
+
+<div class="overlay" id="favorites-modal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-hdr"><h3>⭐ Favorites</h3><button class="modal-close" onclick="closeModal('favorites-modal')">❌</button></div>
+    <div class="modal-body">
+      <div class="fav-grid" id="fav-grid"></div>
+      <div id="fav-empty" style="text-align:center;padding:30px;color:var(--muted);font-family:var(--font-mono);font-size:11px">No favorites yet. Click ⭐ on any image or GIF to save it.</div>
+    </div>
+  </div>
+</div>
+
+<div class="media-lightbox" id="media-lightbox" onclick="closeLightbox()">
+  <button class="media-lightbox-close" onclick="closeLightbox()">❌</button>
+  <div id="lightbox-content"></div>
+</div>
+
+<div id="qr-scan-overlay" class="qr-scan-overlay">
+  <video id="import-qr-video" playsinline></video>
+  <div style="position:fixed;bottom:20px;left:0;right:0;text-align:center">
+    <button class="btn btn-sm" onclick="stopImportScan()">Cancel Scan</button>
+  </div>
+</div>
+
+<div id="fullscreen-loader">
+  <div class="loader-content">
+    <div class="loader-logo">TENKORD</div>
+    <div class="loader-status" id="loader-status"></div>
+  </div>
+</div>
+
+<script src="tenkord-v3.js"></script>
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').then(r=>console.log('SW registered')).catch(e=>console.warn('SW failed',e)));
+}
+</script>
+</body>
+</html>
