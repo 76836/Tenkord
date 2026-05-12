@@ -35,7 +35,7 @@ peer:null,conns:{},rtimers:{},backoff:{},
 friends:lsGetJ("tk_friends",{}),queue:lsGetJ("tk_queue",{}),
 view:"home",activeChat:null,fhTab:"all",typingTimers:{},
 qrStream:null,qrScannedId:null,ctxTarget:null,msgCtxTarget:null,mobView:"home",
-peerReady:!1,signalingOk:!1,
+peerReady:!1,signalingOk:!1,accountId:null,peerId:null,receiverMode:"leader",takeoverUntil:0,promoteTimer:null,
 replyTo:null,editMsg:null,
 deviceId:lsGet("tk_device_id","")||(() =>{let id=uuid();localStorage.setItem("tk_device_id",id);return id})(),
 linkedDevices:{},fileSyncOn:lsGet("tk_filesync","1")==="1",largeFileSkip:lsGet("tk_largeskip","1")==="1",
@@ -46,29 +46,34 @@ let gifDebounce=null;
 let ICE_SERVERS=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"},{urls:"stun:stun2.l.google.com:19302"},{urls:"stun:stun3.l.google.com:19302"},{urls:"stun:openrelay.metered.ca:80"},{urls:"turn:openrelay.metered.ca:80",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443?transport=tcp",username:"openrelayproject",credential:"openrelayproject"}];
 
 // === Networking ===
-async function initPeer(){await CRYPTO.init();S.myId="tk-"+CRYPTO.fingerprint;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");_startPeer()}
-function _startPeer(t=0){if(S.peer){try{S.peer.destroy()}catch(e){}S.peer=null}
-S.peer=new Peer(S.myId,{config:{iceServers:ICE_SERVERS},debug:0});
-S.peer.on("open",e=>{S.peerReady=!0;S.signalingOk=!0;document.getElementById("sig-dot").className="sdot-sm ok";document.getElementById("sig-lbl").textContent="connected";updateTopBar();reconnectAll()});
+function devicePeerId(){return `${S.accountId}-${S.deviceId.replace(/[^a-zA-Z0-9]/g,"").slice(0,16)}`}
+function updateReceiverStatus(){let lbl=document.getElementById("sig-lbl"),dot=document.getElementById("sig-dot"),ss=document.getElementById("sync-status");if(lbl)lbl.textContent=S.receiverMode==="leader"?"receiver online":"sync mode";if(dot)dot.className="sdot-sm ok";if(ss){ss.textContent=S.receiverMode==="leader"?"RECEIVER":"SYNC MODE";ss.className=`sync-badge ${S.receiverMode==="leader"?"synced":"syncing"}`;ss.style.display=""}}
+async function initPeer(){await CRYPTO.init();S.accountId="tk-"+CRYPTO.fingerprint;S.myId=S.accountId;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");installActivityLeaderHooks();_startPeer("leader")}
+function _startPeer(mode="leader",t=0){if(S.peer){try{S.peer.destroy()}catch(e){}S.peer=null}S.peerReady=!1;S.receiverMode=mode;S.peerId=mode==="leader"?S.accountId:devicePeerId();
+S.peer=new Peer(S.peerId,{config:{iceServers:ICE_SERVERS},debug:0});
+S.peer.on("open",e=>{S.peerReady=!0;S.signalingOk=!0;S.peerId=e;S.receiverMode=e===S.accountId?"leader":"sync";updateReceiverStatus();updateTopBar();renderDeviceList();if(S.receiverMode==="leader"){reconnectAll()}else{setTimeout(()=>connectTo(S.accountId,!0),400)}});
 S.peer.on("connection",e=>handleIncomingConn(e));
-S.peer.on("disconnected",()=>{S.peerReady=!1;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="reconnecting";setTimeout(()=>{if(S.peer&&!S.peer.destroyed)try{S.peer.reconnect()}catch(e){_startPeer()}else _startPeer()},3e3)});
-S.peer.on("error",e=>{console.warn("[NET]",e.type,e.message);if(e.type==="unavailable-id")setTimeout(()=>_startPeer(t+1),1e3);else if(["network","server-error","socket-error"].includes(e.type)){document.getElementById("sig-dot").className="sdot-sm";document.getElementById("sig-lbl").textContent="offline";setTimeout(()=>_startPeer(),5e3)}else if(e.type==="peer-unavailable"){let m=e.message?.match(/Could not connect to peer ([^\s]+)/);if(m)schedRec(m[1],15e3)}})}
+S.peer.on("disconnected",()=>{S.peerReady=!1;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="reconnecting";setTimeout(()=>{if(S.peer&&!S.peer.destroyed)try{S.peer.reconnect()}catch(e){_startPeer(S.receiverMode)}else _startPeer(S.receiverMode)},3e3)});
+S.peer.on("error",e=>{console.warn("[NET]",e.type,e.message);if(e.type==="unavailable-id"){if(S.receiverMode==="leader")setTimeout(()=>_startPeer("sync"),700+Math.random()*900);else setTimeout(()=>_startPeer("sync",t+1),1200+Math.random()*1200)}else if(["network","server-error","socket-error"].includes(e.type)){document.getElementById("sig-dot").className="sdot-sm";document.getElementById("sig-lbl").textContent="offline";setTimeout(()=>_startPeer(S.receiverMode),5e3)}else if(e.type==="peer-unavailable"){let m=e.message?.match(/Could not connect to peer ([^\s]+)/);if(m){if(m[1]===S.accountId&&S.receiverMode==="sync")schedulePromotion();else schedRec(m[1],15e3)}}})}
 function loadScript(a){return new Promise((e,t)=>{if(document.querySelector(`script[src="${a}"]`))return e();let n=document.createElement("script");n.src=a;n.onload=e;n.onerror=t;document.head.appendChild(n)})}
-function connectTo(t,silent=!1){if(S.peer&&t&&t!==S.myId&&!S.conns[t]?.open)if(S.peerReady)try{if(!silent)setLoader(!0,"Connecting to "+(S.friends[t]?.name||t.slice(-8))+"...");setupConn(S.peer.connect(t,{reliable:!0,metadata:{from:S.myId,name:S.myName}}))}catch(e){setLoader(!1);schedRec(t,5e3)}else schedRec(t,3e3)}
-function reconnectAll(){Object.keys(S.friends).forEach(e=>{if(!S.conns[e]?.open&&!S.friends[e].pending)schedRec(e,500+1e3*Math.random())})}
+function connectTo(t,silent=!1){if(S.peer&&t&&t!==S.peerId&&!S.conns[t]?.open)if(S.peerReady)try{if(!silent)setLoader(!0,"Connecting to "+(S.friends[t]?.name||t.slice(-8))+"...");setupConn(S.peer.connect(t,{reliable:!0,metadata:{from:S.peerId,accountId:S.accountId,name:S.myName}}))}catch(e){setLoader(!1);schedRec(t,5e3)}else schedRec(t,3e3)}
+function reconnectAll(){if(S.receiverMode!=="leader")return;Object.keys(S.friends).forEach(e=>{if(!S.conns[e]?.open&&!S.friends[e].pending)schedRec(e,500+1e3*Math.random())})}
 function schedRec(e,t){if(!S.rtimers[e]){t=t??Math.min(1.5*(S.backoff[e]||2e3),12e4);S.backoff[e]=t;S.rtimers[e]=setTimeout(()=>{delete S.rtimers[e];if(!S.conns[e]?.open&&S.friends[e]&&!S.friends[e].pending)connectTo(e,!0)},t)}}
-function handleIncomingConn(e){if(S.conns[e.peer]?.open){if(S.myId<e.peer)return void e.close();try{S.conns[e.peer].close()}catch(x){}}setupConn(e)}
+function schedulePromotion(delay){if(S.promoteTimer||S.receiverMode!=="sync")return;S.promoteTimer=setTimeout(()=>{S.promoteTimer=null;if(S.receiverMode==="sync"&&!S.conns[S.accountId]?.open)_startPeer("leader")},delay??(1500+Math.random()*2500))}
+function installActivityLeaderHooks(){if(installActivityLeaderHooks.done)return;installActivityLeaderHooks.done=true;["pointerdown","keydown","touchstart"].forEach(ev=>document.addEventListener(ev,requestTakeover,{passive:true}));document.addEventListener("visibilitychange",()=>{if(!document.hidden)requestTakeover()})}
+function requestTakeover(){if(S.receiverMode!=="sync"||Date.now()<S.takeoverUntil)return;S.takeoverUntil=Date.now()+8000;let c=S.conns[S.accountId];if(c?.open)send(c,{type:"takeover-request",deviceId:S.deviceId,name:S.myName});else schedulePromotion(200)}
+function handleIncomingConn(e){if(S.conns[e.peer]?.open){if((S.peerId||S.myId)<e.peer)return void e.close();try{S.conns[e.peer].close()}catch(x){}}setupConn(e)}
 
 function setupConn(n){n.on("open",async()=>{setLoader(!1);S.conns[n.peer]=n;S.backoff[n.peer]=2e3;
-let ts=Date.now().toString(),sig=await CRYPTO.sign(S.myId+ts);
-send(n,{type:"handshake",id:S.myId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId});
+let ts=Date.now().toString(),sig=await CRYPTO.sign(S.accountId+ts);
+send(n,{type:"handshake",id:S.accountId,peerId:S.peerId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId,receiverMode:S.receiverMode});
 if(S.friends[n.peer]){S.friends[n.peer].online=!0;save();renderFriendPanel();renderFriendsHome();renderMembers()}
-processQueue(n.peer);setTimeout(()=>requestSync(n.peer),600)});
+processQueue(n.peer);setTimeout(()=>{if(!isSameAccount(n.peer))requestSync(n.peer)},600)});
 n.on("data",e=>handleData(n.peer,e));
 n.on("close",()=>_connLost(n.peer));
 n.on("error",e=>{console.warn("[NET] conn error",n.peer,e);_connLost(n.peer);setLoader(!1)})}
 
-function _connLost(e){delete S.conns[e];if(S.friends[e]){S.friends[e].online=!1;save();renderFriendPanel();renderFriendsHome();renderMembers()}if(S.linkedDevices[e])S.linkedDevices[e].online=!1;if(S.friends[e]&&!S.friends[e].pending)schedRec(e);renderQueue()}
+function _connLost(e){delete S.conns[e];if(S.friends[e]){S.friends[e].online=!1;save();renderFriendPanel();renderFriendsHome();renderMembers()}if(S.linkedDevices[e])S.linkedDevices[e].online=!1;if(e===S.accountId&&S.receiverMode==="sync")schedulePromotion();if(S.friends[e]&&!S.friends[e].pending)schedRec(e);renderDeviceList();renderQueue()}
 function send(e,t){try{if(e&&e.open)e.send(t)}catch(x){}}
 function broadcast(n,skip){Object.entries(S.conns).forEach(([e,t])=>{if(e!==skip)send(t,n)})}
 function setLoader(e,t){var n=document.getElementById("fullscreen-loader");if(t)document.getElementById("loader-status").textContent=t;n.classList.toggle("hidden",!e);if(e){clearTimeout(setLoader._t);setLoader._t=setTimeout(()=>n.classList.add("hidden"),10000)}}
@@ -91,17 +96,19 @@ async function processQueue(t){let c=S.conns[t];if(c?.open&&S.queue[t]){let q=S.
 
 // === Cross-device sync ===
 function isSameAccount(peerId){return S.linkedDevices[peerId]?.sameAccount===!0}
+function broadcastToLinkedDevices(packet,skip){Object.entries(S.linkedDevices).forEach(([d,i])=>{if(d!==skip&&i.sameAccount&&S.conns[d]?.open)send(S.conns[d],packet)})}
+function syncMessageToDevices(msg,skip){broadcastToLinkedDevices({type:"device-sync-response",messages:[msg],total:1,offset:0},skip)}
 async function requestSync(peerId){let msgs=await dbGetAll("messages","chat",peerId);let ids=msgs.map(m=>m.id);send(S.conns[peerId],{type:"sync-request",knownIds:ids,deviceId:S.deviceId})}
 async function handleSyncRequest(from,data){let msgs=await dbGetAll("messages","chat",from);let missing=msgs.filter(m=>!data.knownIds.includes(m.id));if(missing.length)send(S.conns[from],{type:"sync-response",messages:missing})}
 async function handleSyncResponse(from,data){let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}if(count>0){toast(`Synced ${count} messages`);if(S.activeChat?.id===from)renderMessages()}}
 async function syncWithOwnDevice(peerId){let allMsgs=await dbGetAll("messages");let ids=allMsgs.map(m=>m.id);send(S.conns[peerId],{type:"device-sync-request",knownIds:ids,deviceId:S.deviceId})}
 async function handleDeviceSyncRequest(from,data){let allMsgs=await dbGetAll("messages");let missing=allMsgs.filter(m=>!data.knownIds.includes(m.id));if(missing.length){for(let i=0;i<missing.length;i+=50){send(S.conns[from],{type:"device-sync-response",messages:missing.slice(i,i+50),total:missing.length,offset:i})}}}
-async function handleDeviceSyncResponse(from,data){let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}if(count>0){let ss=document.getElementById("sync-status");if(ss){ss.textContent="SYNCED";ss.className="sync-badge synced";ss.style.display="";setTimeout(()=>ss.style.display="none",3000)}if(S.activeChat)renderMessages();renderFriendPanel()}}
+async function handleDeviceSyncResponse(from,data){let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}if(count>0){let ss=document.getElementById("sync-status");if(ss){ss.textContent="SYNCED";ss.className="sync-badge synced";ss.style.display="";if(S.receiverMode==="leader")setTimeout(()=>ss.style.display="none",3000);else setTimeout(updateReceiverStatus,1200)}if(S.activeChat)renderMessages();renderFriendPanel()}}
 async function relayPendingForAccount(friendId){if(!S.conns[friendId]?.open)return;Object.entries(S.linkedDevices).forEach(([devPeer,info])=>{if(info.sameAccount&&S.conns[devPeer]?.open){send(S.conns[devPeer],{type:"relay-check",friendId})}})}
 function requestHistoryFromFriend(){let peerId=document.getElementById("import-hist-peer")?.value.trim();if(!peerId)return toast("Enter a peer ID");if(!S.conns[peerId]?.open)return toast("Not connected to that peer");send(S.conns[peerId],{type:"history-request",requesterId:S.myId});toast("History requested...")}
 async function handleHistoryRequest(from){if(!S.friends[from])return;let msgs=await dbGetAll("messages","chat",from);let bundle=JSON.stringify(msgs);let sig=await CRYPTO.sign(bundle);send(S.conns[from],{type:"history-response",messages:msgs,sig,pubKey:CRYPTO.pubKeyRaw})}
 async function handleHistoryResponse(from,data){let verified=await CRYPTO.verify(JSON.stringify(data.messages),data.sig,data.pubKey);if(!verified)return toast("History verification failed!");let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}toast(`Imported ${count} messages from friend`);if(S.activeChat)renderMessages()}
-async function broadcastProfile(){let ts=Date.now().toString(),sig=await CRYPTO.sign(S.myId+ts);let msg={type:"handshake",id:S.myId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId};Object.values(S.conns).forEach(c=>send(c,msg))}
+async function broadcastProfile(){let ts=Date.now().toString(),sig=await CRYPTO.sign(S.accountId+ts);let msg={type:"handshake",id:S.accountId,peerId:S.peerId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId,receiverMode:S.receiverMode};Object.values(S.conns).forEach(c=>send(c,msg))}
 
 // === MESSAGE HANDLING ===
 async function handleData(t,n){
@@ -112,15 +119,26 @@ async function handleData(t,n){
       if(!ok){S.conns[t]?.close();break}
       let sameAccount=n.pubKey===CRYPTO.pubKeyRaw;
       if(sameAccount){
-        S.linkedDevices[t]={sameAccount:true,deviceId:n.deviceId,online:true,name:n.name||t.slice(-8)};
-        renderDeviceList();
-        let ss=document.getElementById("sync-status");
-        if(ss){ss.textContent="SYNCING";ss.className="sync-badge syncing";ss.style.display=""}
+        S.linkedDevices[t]={sameAccount:true,deviceId:n.deviceId,online:true,name:n.name||t.slice(-8),receiverMode:n.receiverMode||"sync",peerId:n.peerId||t,lastSeen:Date.now()};
+        renderDeviceList();updateReceiverStatus();
         setTimeout(()=>syncWithOwnDevice(t),700);
+        break;
       }
       if(S.friends[t])Object.assign(S.friends[t],{name:n.name,avatar:n.avatar,status:n.status,pubKey:n.pubKey,verified:true,online:true});
       else{S.friends[t]={name:n.name||t.slice(-8),avatar:n.avatar||"",status:n.status||"",pubKey:n.pubKey,verified:true,online:true,pending:true,unread:0};toast("👋 Friend request from "+(n.name||t.slice(-8)))}
       save();renderFriendPanel();renderFriendsHome();renderMembers();break;
+    }
+    case "takeover-request":{
+      if(!isSameAccount(t)||S.receiverMode!=="leader")break;
+      send(S.conns[t],{type:"takeover-grant",ts:Date.now()});
+      toast((S.linkedDevices[t]?.name||"Another device")+" is taking over receiver duty");
+      setTimeout(()=>_startPeer("sync"),300);
+      break;
+    }
+    case "takeover-grant":{
+      if(!isSameAccount(t))break;
+      setTimeout(()=>_startPeer("leader"),600);
+      break;
     }
     case "dm":{
       let f=S.friends[t];
@@ -135,6 +153,7 @@ async function handleData(t,n){
       if(S.activeChat?.type==="dm"&&S.activeChat?.id===t){appendMsg(msg);scrollBottom();if(f){f.unread=0;save()}}
       renderFriendPanel();renderFriendsHome();updateMobBadge();
       if(n.fileId&&!n.mediaUrl)initiateFileReceive(t,n);
+      syncMessageToDevices(msg,t);
       break;
     }
     case "edit-msg":{
@@ -149,6 +168,7 @@ async function handleData(t,n){
       msg.text=n.newText;msg.editedAt=n.editTs;
       await dbPut("messages",msg);
       if(S.activeChat?.id===t)rerenderMsg(msg);
+      syncMessageToDevices(msg,t);
       break;
     }
     case "delete-msg":{
@@ -162,6 +182,7 @@ async function handleData(t,n){
       msg.deleted=true;msg.text="[Message deleted]";msg.mediaUrl=null;msg.fileId=null;
       await dbPut("messages",msg);
       if(S.activeChat?.id===t)rerenderMsg(msg);
+      syncMessageToDevices(msg,t);
       break;
     }
     case "typing":
@@ -212,7 +233,7 @@ async function sendMsg(){
   let conn=S.conns[chatId];
   if(conn?.open)send(conn,packet);
   else{addToQueue(chatId,packet);toast("Friend offline — queued")}
-  Object.entries(S.linkedDevices).forEach(([d,i])=>{if(i.sameAccount&&S.conns[d]?.open)send(S.conns[d],{type:"device-sync-response",messages:[msg],total:1,offset:0})});
+  syncMessageToDevices(msg);
   clearReply();
 }
 
@@ -228,7 +249,7 @@ async function sendEdit(msgId,newText){
   let chatId=msg.chatId,packet={type:"edit-msg",msgId,newText,author:S.myName,editTs,sig};
   let conn=S.conns[chatId];
   if(conn?.open)send(conn,packet);else addToQueue(chatId,packet);
-  Object.entries(S.linkedDevices).forEach(([d,i])=>{if(i.sameAccount&&S.conns[d]?.open)send(S.conns[d],{type:"device-sync-response",messages:[msg],total:1,offset:0})});
+  syncMessageToDevices(msg);
   clearEdit();
 }
 
@@ -243,7 +264,7 @@ async function deleteMsg(msgId){
   let chatId=msg.chatId,packet={type:"delete-msg",msgId,author:S.myName,ts,sig};
   let conn=S.conns[chatId];
   if(conn?.open)send(conn,packet);else addToQueue(chatId,packet);
-  Object.entries(S.linkedDevices).forEach(([d,i])=>{if(i.sameAccount&&S.conns[d]?.open)send(S.conns[d],{type:"device-sync-response",messages:[msg],total:1,offset:0})});
+  syncMessageToDevices(msg);
 }
 
 function setReply(msg){
@@ -351,8 +372,8 @@ function renderMobMembers(){
 function renderDeviceList(){
   let el=document.getElementById("device-list-area");if(!el)return;
   let html='<div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">Your Devices</div>';
-  html+=`<div class="device-card"><span class="dev-icon">💻</span><div class="dev-info"><div class="dev-name">${esc(S.myName||"This device")}</div><div class="dev-status">${S.deviceId.slice(0,16)}... (this device)</div></div><div class="device-dot on"></div></div>`;
-  Object.entries(S.linkedDevices).forEach(([id,d])=>{html+=`<div class="device-card"><span class="dev-icon">📱</span><div class="dev-info"><div class="dev-name">${esc(d.name||"Linked device")}</div><div class="dev-status">${id.slice(-12)}</div></div><div class="device-dot ${d.online?"on":"off"}"></div></div>`});
+  html+=`<div class="device-card"><span class="dev-icon">💻</span><div class="dev-info"><div class="dev-name">${esc(S.myName||"This device")}</div><div class="dev-status">${S.deviceId.slice(0,16)}... (this device, ${S.receiverMode==="leader"?"receiver":"sync mode"})</div></div><div class="device-dot on"></div></div>`;
+  Object.entries(S.linkedDevices).forEach(([id,d])=>{html+=`<div class="device-card"><span class="dev-icon">📱</span><div class="dev-info"><div class="dev-name">${esc(d.name||"Linked device")}</div><div class="dev-status">${id.slice(-12)} · ${d.receiverMode==="leader"?"receiver":"sync mode"}</div></div><div class="device-dot ${d.online?"on":"off"}"></div></div>`});
   el.innerHTML=html;
 }
 
@@ -470,7 +491,7 @@ async function handleFileUpload(event){
       await dbPut("messages",msg);await dbPut("files",{id,name:file.name,type:file.type,size:file.size,data:mediaUrl,ts});
       save();appendMsg(msg);scrollBottom();
       let conn=S.conns[chatId];if(conn?.open)send(conn,packet);else addToQueue(chatId,packet);
-      Object.entries(S.linkedDevices).forEach(([d,i])=>{if(i.sameAccount&&S.conns[d]?.open)send(S.conns[d],{type:"device-sync-response",messages:[msg],total:1,offset:0})});
+      syncMessageToDevices(msg);
     };reader.readAsDataURL(file);
   }else sendFileTransfer(file,id,chatId);
 }
@@ -484,7 +505,7 @@ async function sendFileTransfer(file,id,chatId){
     let packet={type:"dm",msgId:id,author:S.myName,avatar:S.myAvatar,text:"",ts,sig,fileId:id,fileName:file.name,fileType:file.type,fileSize:file.size,mediaUrl:null};
     await dbPut("messages",msg);save();appendMsg(msg);scrollBottom();
     let conn=S.conns[chatId];if(conn?.open){send(conn,packet);setTimeout(()=>startFileSend(id,chatId),500)}else addToQueue(chatId,packet);
-    Object.entries(S.linkedDevices).forEach(([d,i])=>{if(i.sameAccount&&S.conns[d]?.open){if(!S.largeFileSkip||file.size<=10*1024*1024)send(S.conns[d],{type:"device-sync-response",messages:[msg],total:1,offset:0})}});
+    if(!S.largeFileSkip||file.size<=10*1024*1024)syncMessageToDevices(msg);
   };reader.readAsArrayBuffer(file);
 }
 async function startFileSend(fileId,peerId){
