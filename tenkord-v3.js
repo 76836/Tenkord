@@ -30,7 +30,14 @@ function lsGet(e,t){return localStorage.getItem(e)||t}
 function lsGetJ(e,t){try{return JSON.parse(localStorage.getItem(e))||t}catch(e){return t}}
 function save(){localStorage.setItem("tk_friends",JSON.stringify(S.friends));localStorage.setItem("tk_queue",JSON.stringify(S.queue))}
 
-let S={myId:null,myName:lsGet("tk_name",""),myStatus:lsGet("tk_status",""),myAvatar:lsGet("tk_avatar",""),
+// Canonical friend key: "tk-<fingerprint>" derived from any peer ID format
+function canonicalId(peerId){
+  if(!peerId)return peerId;
+  let fp=fpFromPeerId(peerId);
+  return fp?"tk-"+fp:peerId;
+}
+
+let S={myId:null,myFingerprint:null,myName:lsGet("tk_name",""),myStatus:lsGet("tk_status",""),myAvatar:lsGet("tk_avatar",""),
 peer:null,conns:{},rtimers:{},backoff:{},
 friends:lsGetJ("tk_friends",{}),queue:lsGetJ("tk_queue",{}),
 view:"home",activeChat:null,fhTab:"all",typingTimers:{},
@@ -46,29 +53,55 @@ let gifDebounce=null;
 let ICE_SERVERS=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"},{urls:"stun:stun2.l.google.com:19302"},{urls:"stun:stun3.l.google.com:19302"},{urls:"stun:openrelay.metered.ca:80"},{urls:"turn:openrelay.metered.ca:80",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443?transport=tcp",username:"openrelayproject",credential:"openrelayproject"}];
 
 // === Networking ===
-async function initPeer(){await CRYPTO.init();S.myId="tk-"+CRYPTO.fingerprint;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");_startPeer()}
+async function initPeer(){await CRYPTO.init();S.myFingerprint=CRYPTO.fingerprint;S.myId="tk-"+CRYPTO.fingerprint+"-"+S.deviceId.slice(0,8);document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");_startPeer()}
 function _startPeer(t=0){if(S.peer){try{S.peer.destroy()}catch(e){}S.peer=null}
 S.peer=new Peer(S.myId,{config:{iceServers:ICE_SERVERS},debug:0});
 S.peer.on("open",e=>{S.peerReady=!0;S.signalingOk=!0;document.getElementById("sig-dot").className="sdot-sm ok";document.getElementById("sig-lbl").textContent="connected";updateTopBar();reconnectAll()});
 S.peer.on("connection",e=>handleIncomingConn(e));
 S.peer.on("disconnected",()=>{S.peerReady=!1;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="reconnecting";setTimeout(()=>{if(S.peer&&!S.peer.destroyed)try{S.peer.reconnect()}catch(e){_startPeer()}else _startPeer()},3e3)});
-S.peer.on("error",e=>{console.warn("[NET]",e.type,e.message);if(e.type==="unavailable-id")setTimeout(()=>_startPeer(t+1),1e3);else if(["network","server-error","socket-error"].includes(e.type)){document.getElementById("sig-dot").className="sdot-sm";document.getElementById("sig-lbl").textContent="offline";setTimeout(()=>_startPeer(),5e3)}else if(e.type==="peer-unavailable"){let m=e.message?.match(/Could not connect to peer ([^\s]+)/);if(m)schedRec(m[1],15e3)}})}
+S.peer.on("error",e=>{console.warn("[NET]",e.type,e.message);if(e.type==="unavailable-id")setTimeout(()=>_startPeer(t+1),1e3);else if(["network","server-error","socket-error"].includes(e.type)){document.getElementById("sig-dot").className="sdot-sm";document.getElementById("sig-lbl").textContent="offline";setTimeout(()=>_startPeer(),5e3)}else if(e.type==="peer-unavailable"){let m=e.message?.match(/Could not connect to peer ([^\s]+)/);if(m){let rawId=m[1];schedRec(canonicalId(rawId)||rawId,15e3,rawId)}}})}
 function loadScript(a){return new Promise((e,t)=>{if(document.querySelector(`script[src="${a}"]`))return e();let n=document.createElement("script");n.src=a;n.onload=e;n.onerror=t;document.head.appendChild(n)})}
-function connectTo(t,silent=!1){if(S.peer&&t&&t!==S.myId&&!S.conns[t]?.open)if(S.peerReady)try{if(!silent)setLoader(!0,"Connecting to "+(S.friends[t]?.name||t.slice(-8))+"...");setupConn(S.peer.connect(t,{reliable:!0,metadata:{from:S.myId,name:S.myName}}))}catch(e){setLoader(!1);schedRec(t,5e3)}else schedRec(t,3e3)}
+function connectTo(t,silent=!1){
+  // t is the canonical friend key; use stored peerId if available for actual network connect
+  let netId=S.friends[t]?.peerId||t;
+  if(S.peer&&t&&t!==S.myId&&!S.conns[t]?.open)
+    if(S.peerReady)try{if(!silent)setLoader(!0,"Connecting to "+(S.friends[t]?.name||t.slice(-8))+"...");setupConn(S.peer.connect(netId,{reliable:!0,metadata:{from:S.myId,name:S.myName}}))}catch(e){setLoader(!1);schedRec(t,5e3)}
+    else schedRec(t,3e3)
+}
 function reconnectAll(){Object.keys(S.friends).forEach(e=>{if(!S.conns[e]?.open&&!S.friends[e].pending)schedRec(e,500+1e3*Math.random())})}
-function schedRec(e,t){if(!S.rtimers[e]){t=t??Math.min(1.5*(S.backoff[e]||2e3),12e4);S.backoff[e]=t;S.rtimers[e]=setTimeout(()=>{delete S.rtimers[e];if(!S.conns[e]?.open&&S.friends[e]&&!S.friends[e].pending)connectTo(e,!0)},t)}}
-function handleIncomingConn(e){if(S.conns[e.peer]?.open){if(S.myId<e.peer)return void e.close();try{S.conns[e.peer].close()}catch(x){}}setupConn(e)}
+function schedRec(e,t,rawPeerId){if(!S.rtimers[e]){t=t??Math.min(1.5*(S.backoff[e]||2e3),12e4);S.backoff[e]=t;// store raw peer ID so connectTo can use it
+if(rawPeerId&&S.friends[e])S.friends[e].peerId=rawPeerId;
+S.rtimers[e]=setTimeout(()=>{delete S.rtimers[e];if(!S.conns[e]?.open&&S.friends[e]&&!S.friends[e].pending)connectTo(e,!0)},t)}}
+function handleIncomingConn(e){
+  let cid=canonicalId(e.peer);
+  if(S.conns[cid]?.open){if(S.myId<e.peer)return void e.close();try{S.conns[cid].close()}catch(x){}}
+  setupConn(e)
+}
 
-function setupConn(n){n.on("open",async()=>{setLoader(!1);S.conns[n.peer]=n;S.backoff[n.peer]=2e3;
+function setupConn(n){n.on("open",async()=>{setLoader(!1);
+let isSelf=fpFromPeerId(n.peer)===S.myFingerprint;
+let connKey=isSelf?n.peer:canonicalId(n.peer);
+S.conns[connKey]=n;S.backoff[connKey]=2e3;
 let ts=Date.now().toString(),sig=await CRYPTO.sign(S.myId+ts);
 send(n,{type:"handshake",id:S.myId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId});
-if(S.friends[n.peer]){S.friends[n.peer].online=!0;save();renderFriendPanel();renderFriendsHome();renderMembers()}
-processQueue(n.peer);setTimeout(()=>requestSync(n.peer),600)});
-n.on("data",e=>handleData(n.peer,e));
-n.on("close",()=>_connLost(n.peer));
-n.on("error",e=>{console.warn("[NET] conn error",n.peer,e);_connLost(n.peer);setLoader(!1)})}
+if(S.friends[connKey]){S.friends[connKey].online=!0;save();renderFriendPanel();renderFriendsHome();renderMembers()}
+processQueue(connKey);setTimeout(()=>isSelf?syncWithOwnDevice(connKey):requestSync(connKey),600)});
+n.on("data",e=>{
+  let isSelf=fpFromPeerId(n.peer)===S.myFingerprint;
+  let connKey=isSelf?n.peer:canonicalId(n.peer);
+  handleData(connKey,e)
+});
+n.on("close",()=>{
+  let isSelf=fpFromPeerId(n.peer)===S.myFingerprint;
+  let connKey=isSelf?n.peer:canonicalId(n.peer);
+  _connLost(connKey,n.peer)
+});
+n.on("error",e=>{console.warn("[NET] conn error",n.peer,e);
+  let isSelf=fpFromPeerId(n.peer)===S.myFingerprint;
+  let connKey=isSelf?n.peer:canonicalId(n.peer);
+  _connLost(connKey,n.peer);setLoader(!1)})}
 
-function _connLost(e){delete S.conns[e];if(S.friends[e]){S.friends[e].online=!1;save();renderFriendPanel();renderFriendsHome();renderMembers()}if(S.linkedDevices[e])S.linkedDevices[e].online=!1;if(S.friends[e]&&!S.friends[e].pending)schedRec(e);renderQueue()}
+function _connLost(connKey,rawPeerId){delete S.conns[connKey];if(S.friends[connKey]){S.friends[connKey].online=!1;save();renderFriendPanel();renderFriendsHome();renderMembers()}if(S.linkedDevices[connKey])S.linkedDevices[connKey].online=!1;if(S.friends[connKey]&&!S.friends[connKey].pending)schedRec(connKey,undefined,rawPeerId);renderQueue()}
 function send(e,t){try{if(e&&e.open)e.send(t)}catch(x){}}
 function broadcast(n,skip){Object.entries(S.conns).forEach(([e,t])=>{if(e!==skip)send(t,n)})}
 function setLoader(e,t){var n=document.getElementById("fullscreen-loader");if(t)document.getElementById("loader-status").textContent=t;n.classList.toggle("hidden",!e);if(e){clearTimeout(setLoader._t);setLoader._t=setTimeout(()=>n.classList.add("hidden"),10000)}}
@@ -91,14 +124,46 @@ async function processQueue(t){let c=S.conns[t];if(c?.open&&S.queue[t]){let q=S.
 
 // === Cross-device sync ===
 function isSameAccount(peerId){return S.linkedDevices[peerId]?.sameAccount===!0}
-async function requestSync(peerId){let msgs=await dbGetAll("messages","chat",peerId);let ids=msgs.map(m=>m.id);send(S.conns[peerId],{type:"sync-request",knownIds:ids,deviceId:S.deviceId})}
-async function handleSyncRequest(from,data){let msgs=await dbGetAll("messages","chat",from);let missing=msgs.filter(m=>!data.knownIds.includes(m.id));if(missing.length)send(S.conns[from],{type:"sync-response",messages:missing})}
-async function handleSyncResponse(from,data){let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}if(count>0){toast(`Synced ${count} messages`);if(S.activeChat?.id===from)renderMessages()}}
-async function syncWithOwnDevice(peerId){let allMsgs=await dbGetAll("messages");let ids=allMsgs.map(m=>m.id);send(S.conns[peerId],{type:"device-sync-request",knownIds:ids,deviceId:S.deviceId})}
-async function handleDeviceSyncRequest(from,data){let allMsgs=await dbGetAll("messages");let missing=allMsgs.filter(m=>!data.knownIds.includes(m.id));if(missing.length){for(let i=0;i<missing.length;i+=50){send(S.conns[from],{type:"device-sync-response",messages:missing.slice(i,i+50),total:missing.length,offset:i})}}}
+// Sync with a friend: exchange messages for that specific chat
+async function requestSync(peerId){
+  // Only do friend-sync for non-own-account peers
+  if(fpFromPeerId(peerId)===S.myFingerprint)return;
+  let msgs=await dbGetAll("messages","chat",peerId);
+  let ids=msgs.map(m=>m.id);
+  send(S.conns[peerId],{type:"sync-request",knownIds:ids,deviceId:S.deviceId})
+}
+
+// Sync with own device: exchange ALL messages
+async function syncWithOwnDevice(peerId){
+  let allMsgs=await dbGetAll("messages");
+  let ids=allMsgs.map(m=>m.id);
+  send(S.conns[peerId],{type:"device-sync-request",knownIds:ids,deviceId:S.deviceId})
+}
+
+async function handleSyncRequest(from,data){
+  let msgs=await dbGetAll("messages","chat",from);
+  let missing=msgs.filter(m=>!data.knownIds.includes(m.id));
+  if(missing.length)send(S.conns[from],{type:"sync-response",messages:missing})
+}
+async function handleSyncResponse(from,data){
+  let count=0;
+  for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}
+  if(count>0){toast(`Synced ${count} messages`);if(S.activeChat?.id===from)renderMessages()}
+}
+async function handleDeviceSyncRequest(from,data){
+  let allMsgs=await dbGetAll("messages");
+  let missing=allMsgs.filter(m=>!data.knownIds.includes(m.id));
+  // Send friend list so new device can reconnect to everyone
+  send(S.conns[from],{type:"device-sync-friends",friends:S.friends});
+  if(missing.length){
+    for(let i=0;i<missing.length;i+=50){
+      send(S.conns[from],{type:"device-sync-response",messages:missing.slice(i,i+50),total:missing.length,offset:i})
+    }
+  }
+}
 async function handleDeviceSyncResponse(from,data){let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}if(count>0){let ss=document.getElementById("sync-status");if(ss){ss.textContent="SYNCED";ss.className="sync-badge synced";ss.style.display="";setTimeout(()=>ss.style.display="none",3000)}if(S.activeChat)renderMessages();renderFriendPanel()}}
 async function relayPendingForAccount(friendId){if(!S.conns[friendId]?.open)return;Object.entries(S.linkedDevices).forEach(([devPeer,info])=>{if(info.sameAccount&&S.conns[devPeer]?.open){send(S.conns[devPeer],{type:"relay-check",friendId})}})}
-function requestHistoryFromFriend(){let peerId=document.getElementById("import-hist-peer")?.value.trim();if(!peerId)return toast("Enter a peer ID");if(!S.conns[peerId]?.open)return toast("Not connected to that peer");send(S.conns[peerId],{type:"history-request",requesterId:S.myId});toast("History requested...")}
+function requestHistoryFromFriend(){let raw=document.getElementById("import-hist-peer")?.value.trim();if(!raw)return toast("Enter a peer ID");let peerId=canonicalId(raw)||raw;if(!S.conns[peerId]?.open)return toast("Not connected to that peer");send(S.conns[peerId],{type:"history-request",requesterId:S.myId});toast("History requested...")}
 async function handleHistoryRequest(from){if(!S.friends[from])return;let msgs=await dbGetAll("messages","chat",from);let bundle=JSON.stringify(msgs);let sig=await CRYPTO.sign(bundle);send(S.conns[from],{type:"history-response",messages:msgs,sig,pubKey:CRYPTO.pubKeyRaw})}
 async function handleHistoryResponse(from,data){let verified=await CRYPTO.verify(JSON.stringify(data.messages),data.sig,data.pubKey);if(!verified)return toast("History verification failed!");let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}toast(`Imported ${count} messages from friend`);if(S.activeChat)renderMessages()}
 async function broadcastProfile(){let ts=Date.now().toString(),sig=await CRYPTO.sign(S.myId+ts);let msg={type:"handshake",id:S.myId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId};Object.values(S.conns).forEach(c=>send(c,msg))}
@@ -108,9 +173,9 @@ async function handleData(t,n){
   switch(n.type){
     case "handshake":{
       let ok=false;
-      try{let fp="tk-"+(await CRYPTO._fp(n.pubKey));ok=fp===n.id&&await CRYPTO.verify(n.id+n.ts,n.sig,n.pubKey)}catch(e){}
+      try{let fp="tk-"+(await CRYPTO._fp(n.pubKey));let idFp=canonicalId(n.id);ok=fp===idFp&&await CRYPTO.verify(n.id+n.ts,n.sig,n.pubKey)}catch(e){}
       if(!ok){S.conns[t]?.close();break}
-      let sameAccount=n.pubKey===CRYPTO.pubKeyRaw;
+      let sameAccount=fpFromPeerId(t)===S.myFingerprint;
       if(sameAccount){
         S.linkedDevices[t]={sameAccount:true,deviceId:n.deviceId,online:true,name:n.name||t.slice(-8)};
         renderDeviceList();
@@ -118,8 +183,10 @@ async function handleData(t,n){
         if(ss){ss.textContent="SYNCING";ss.className="sync-badge syncing";ss.style.display=""}
         setTimeout(()=>syncWithOwnDevice(t),700);
       }
-      if(S.friends[t])Object.assign(S.friends[t],{name:n.name,avatar:n.avatar,status:n.status,pubKey:n.pubKey,verified:true,online:true});
-      else{S.friends[t]={name:n.name||t.slice(-8),avatar:n.avatar||"",status:n.status||"",pubKey:n.pubKey,verified:true,online:true,pending:true,unread:0};toast("👋 Friend request from "+(n.name||t.slice(-8)))}
+      if(!sameAccount){
+        if(S.friends[t])Object.assign(S.friends[t],{name:n.name,avatar:n.avatar,status:n.status,pubKey:n.pubKey,verified:true,online:true,peerId:t});
+        else{S.friends[t]={name:n.name||t.slice(-8),avatar:n.avatar||"",status:n.status||"",pubKey:n.pubKey,verified:true,online:true,pending:true,unread:0};toast("👋 Friend request from "+(n.name||t.slice(-8)))}
+      }
       save();renderFriendPanel();renderFriendsHome();renderMembers();break;
     }
     case "dm":{
@@ -172,6 +239,15 @@ async function handleData(t,n){
     }
     case "sync-request": handleSyncRequest(t,n);break;
     case "sync-response": handleSyncResponse(t,n);break;
+    case "device-sync-friends": {
+      // Merge friend list from sibling device; don't overwrite existing richer data
+      let changed=false;
+      Object.entries(n.friends||{}).forEach(([id,f])=>{
+        if(!S.friends[id]){S.friends[id]={...f,online:false};changed=true}
+      });
+      if(changed){save();renderFriendPanel();renderFriendsHome();renderMembers();reconnectAll()}
+      break;
+    }
     case "device-sync-request": handleDeviceSyncRequest(t,n);break;
     case "device-sync-response": handleDeviceSyncResponse(t,n);break;
     case "history-request": handleHistoryRequest(t);break;
@@ -282,11 +358,12 @@ function sendTyping(){
 }
 function showTyping(e){let t=document.getElementById("typing-bar");t.innerHTML=`<div class="tdots"><span></span><span></span><span></span></div><span>${esc(e)} is typing</span>`;clearTimeout(S.typingTimers[e]);S.typingTimers[e]=setTimeout(()=>t.innerHTML="",4e3)}
 function addFriendById(){
-  let e=document.getElementById("af-id-input").value.trim(),t=document.getElementById("af-nick").value.trim();
-  if(!e)return toast("Enter a Peer ID");
-  if(e===S.myId)return toast("That is your own ID!");
-  if(S.friends[e]){if(t)S.friends[e].name=t}
-  else S.friends[e]={name:t||e.slice(-8),avatar:"",status:"",online:false,pending:false,unread:0};
+  let raw=document.getElementById("af-id-input").value.trim(),t=document.getElementById("af-nick").value.trim();
+  if(!raw)return toast("Enter a Peer ID");
+  let e=canonicalId(raw)||raw; // normalize to tk-<fp>
+  if(e===canonicalId(S.myId))return toast("That is your own ID!");
+  if(S.friends[e]){if(t)S.friends[e].name=t;S.friends[e].peerId=raw}
+  else S.friends[e]={name:t||raw.slice(-8),avatar:"",status:"",online:false,pending:false,unread:0,peerId:raw};
   save();connectTo(e);renderFriendPanel();renderFriendsHome();closeModal("add-friend-modal");toast("Connecting...");
 }
 function acceptFriend(e){let f=S.friends[e];if(!f)return;f.pending=false;save();let c=S.conns[e];if(c?.open)send(c,{type:"accept-friend"});else connectTo(e);renderFriendPanel();renderFriendsHome();toast("Accepted "+f.name)}
