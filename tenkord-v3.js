@@ -113,6 +113,9 @@ async function processQueue(t){let c=S.conns[t];if(c?.open&&S.queue[t]){let q=S.
 function isSameAccount(peerId){return S.linkedDevices[peerId]?.sameAccount===!0||Object.values(S.linkedDevices).some(d=>d.sameAccount&&(d.peerId===peerId||d.syncPeerId===peerId))}
 function broadcastToLinkedDevices(packet,skip){Object.entries(S.linkedDevices).forEach(([d,i])=>{let c=getDeviceConn(i.syncPeerId||d);if(d!==skip&&i.peerId!==skip&&i.syncPeerId!==skip&&i.sameAccount&&c?.open)send(c,packet)})}
 function syncMessageToDevices(msg,skip){broadcastToLinkedDevices({type:"device-sync-response",messages:[msg],total:1,offset:0},skip)}
+function delegateOutbound(friendId,packet,msg){let sent=false;Object.entries(S.linkedDevices).forEach(([id,d])=>{let c=getDeviceConn(d.syncPeerId||id);if(c?.open){send(c,{type:"device-outbound",friendId,packet,msg,origin:S.syncPeerId||S.peerId});sent=true}});return sent}
+function sendOrDelegate(friendId,packet,msg){let conn=S.conns[friendId];if(conn?.open){send(conn,packet);return true}if(delegateOutbound(friendId,packet,msg)){toast("Sent through your receiver device");return true}addToQueue(friendId,packet);return false}
+async function handleDeviceOutbound(from,data){if(data.msg)await upsertSyncedMessages([data.msg]);syncMessageToDevices(data.msg,from);if(S.receiverMode!=="leader"||!S.peerReady)return;let c=S.conns[data.friendId];if(c?.open)send(c,data.packet);else addToQueue(data.friendId,data.packet)}
 async function requestSync(peerId){let msgs=await dbGetAll("messages","chat",peerId);let ids=msgs.map(m=>m.id);send(S.conns[peerId],{type:"sync-request",knownIds:ids,deviceId:S.deviceId})}
 async function handleSyncRequest(from,data){let msgs=await dbGetAll("messages","chat",from);let missing=msgs.filter(m=>!data.knownIds.includes(m.id));if(missing.length)send(S.conns[from],{type:"sync-response",messages:missing})}
 async function handleSyncResponse(from,data){let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}if(count>0){toast(`Synced ${count} messages`);if(S.activeChat?.id===from)renderMessages()}}
@@ -237,12 +240,13 @@ async function handleData(t,n){
     case "device-sync-request": handleDeviceSyncRequest(t,n);break;
     case "device-sync-response": handleDeviceSyncResponse(t,n);break;
     case "device-sync-done": handleDeviceSyncDone(t,n);break;
+    case "device-outbound": handleDeviceOutbound(t,n);break;
     case "history-request": handleHistoryRequest(t);break;
     case "history-response": handleHistoryResponse(t,n);break;
     case "file-chunk": handleFileChunk(t,n);break;
     case "file-request": handleFileRequest(t,n);break;
     case "relay-check": {
-      if(S.queue[n.friendId]?.length) send(S.conns[t], {type:"relay-queue", friendId: n.friendId, messages: S.queue[n.friendId]});
+      if(S.queue[n.friendId]?.length) send(getDeviceConn(t), {type:"relay-queue", friendId: n.friendId, messages: S.queue[n.friendId]});
       break;
     }
     case "relay-queue": {
@@ -273,9 +277,7 @@ async function sendMsg(){
   await dbPut("messages",msg);
   let f=S.friends[chatId];if(f){f.lastMsg=text;f.unread=0}
   save();appendMsg(msg);scrollBottom();renderFriendPanel();
-  let conn=S.conns[chatId];
-  if(conn?.open)send(conn,packet);
-  else{addToQueue(chatId,packet);toast("Friend offline — queued")}
+  if(!sendOrDelegate(chatId,packet,msg))toast("Friend offline — queued");
   syncMessageToDevices(msg);
   clearReply();
 }
@@ -290,8 +292,7 @@ async function sendEdit(msgId,newText){
   msg.text=newText;msg.editedAt=editTs;
   await dbPut("messages",msg);rerenderMsg(msg);
   let chatId=msg.chatId,packet={type:"edit-msg",msgId,newText,author:S.myName,editTs,sig};
-  let conn=S.conns[chatId];
-  if(conn?.open)send(conn,packet);else addToQueue(chatId,packet);
+  sendOrDelegate(chatId,packet,msg);
   syncMessageToDevices(msg);
   clearEdit();
 }
@@ -305,8 +306,7 @@ async function deleteMsg(msgId){
   msg.deleted=true;msg.text="[Message deleted]";msg.mediaUrl=null;msg.fileId=null;
   await dbPut("messages",msg);rerenderMsg(msg);
   let chatId=msg.chatId,packet={type:"delete-msg",msgId,author:S.myName,ts,sig};
-  let conn=S.conns[chatId];
-  if(conn?.open)send(conn,packet);else addToQueue(chatId,packet);
+  sendOrDelegate(chatId,packet,msg);
   syncMessageToDevices(msg);
 }
 
@@ -533,7 +533,7 @@ async function handleFileUpload(event){
       let packet={type:"dm",msgId:id,author:S.myName,avatar:S.myAvatar,text:"",ts,sig,fileName:file.name,fileType:file.type,fileSize:file.size,mediaUrl};
       await dbPut("messages",msg);await dbPut("files",{id,name:file.name,type:file.type,size:file.size,data:mediaUrl,ts});
       save();appendMsg(msg);scrollBottom();
-      let conn=S.conns[chatId];if(conn?.open)send(conn,packet);else addToQueue(chatId,packet);
+      sendOrDelegate(chatId,packet,msg);
       syncMessageToDevices(msg);
     };reader.readAsDataURL(file);
   }else sendFileTransfer(file,id,chatId);
