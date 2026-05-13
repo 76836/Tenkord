@@ -53,13 +53,20 @@ let gifDebounce=null;
 let ICE_SERVERS=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"},{urls:"stun:stun2.l.google.com:19302"},{urls:"stun:stun3.l.google.com:19302"},{urls:"stun:openrelay.metered.ca:80"},{urls:"turn:openrelay.metered.ca:80",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443",username:"openrelayproject",credential:"openrelayproject"},{urls:"turn:openrelay.metered.ca:443?transport=tcp",username:"openrelayproject",credential:"openrelayproject"}];
 
 // === Networking ===
-async function initPeer(){await CRYPTO.init();S.myFingerprint=CRYPTO.fingerprint;S.myId="tk-"+CRYPTO.fingerprint+"-"+S.deviceId.slice(0,8);document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");_startPeer()}
-function _startPeer(t=0){if(S.peer){try{S.peer.destroy()}catch(e){}S.peer=null}
-S.peer=new Peer(S.myId,{config:{iceServers:ICE_SERVERS},debug:0});
+const PEER_SERVERS=[
+  {host:"0.peerjs.com",port:443,path:"/",secure:true,key:"peerjs"},
+  {host:"peer.peerjs.com",port:443,path:"/",secure:true,key:"peerjs"},
+  {host:"peerjs.fly.dev",port:443,path:"/",secure:true,key:"peerjs"},
+];
+async function initPeer(){await CRYPTO.init();S.myFingerprint=CRYPTO.fingerprint;S.myId="tk-"+CRYPTO.fingerprint+"-"+S.deviceId.slice(0,8);document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");_startPeer(0)}
+function _startPeer(serverIdx=0){if(S.peer){try{S.peer.destroy()}catch(e){}S.peer=null}
+let srv=PEER_SERVERS[serverIdx%PEER_SERVERS.length];
+console.log("[NET] trying signaling server",srv.host);
+S.peer=new Peer(S.myId,{...srv,config:{iceServers:ICE_SERVERS},debug:0});
 S.peer.on("open",e=>{S.peerReady=!0;S.signalingOk=!0;document.getElementById("sig-dot").className="sdot-sm ok";document.getElementById("sig-lbl").textContent="connected";updateTopBar();reconnectAll()});
 S.peer.on("connection",e=>handleIncomingConn(e));
-S.peer.on("disconnected",()=>{S.peerReady=!1;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="reconnecting";setTimeout(()=>{if(S.peer&&!S.peer.destroyed)try{S.peer.reconnect()}catch(e){_startPeer()}else _startPeer()},3e3)});
-S.peer.on("error",e=>{console.warn("[NET]",e.type,e.message);if(e.type==="unavailable-id")setTimeout(()=>_startPeer(t+1),1e3);else if(["network","server-error","socket-error"].includes(e.type)){document.getElementById("sig-dot").className="sdot-sm";document.getElementById("sig-lbl").textContent="offline";setTimeout(()=>_startPeer(),5e3)}else if(e.type==="peer-unavailable"){let m=e.message?.match(/Could not connect to peer ([^\s]+)/);if(m){let rawId=m[1];schedRec(canonicalId(rawId)||rawId,15e3,rawId)}}})}
+S.peer.on("disconnected",()=>{S.peerReady=!1;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="reconnecting";setTimeout(()=>{if(S.peer&&!S.peer.destroyed)try{S.peer.reconnect()}catch(e){_startPeer(serverIdx)}else _startPeer(serverIdx)},3e3)});
+S.peer.on("error",e=>{console.warn("[NET]",e.type,e.message);if(e.type==="unavailable-id"){setTimeout(()=>_startPeer(serverIdx+1),1e3)}else if(["network","server-error","socket-error","webrtc"].includes(e.type)){document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="retrying...";let next=serverIdx+1;let delay=next%PEER_SERVERS.length===0?8e3:2e3;setTimeout(()=>_startPeer(next),delay)}else if(e.type==="peer-unavailable"){let m=e.message?.match(/Could not connect to peer ([^\s]+)/);if(m){let rawId=m[1];schedRec(canonicalId(rawId)||rawId,15e3,rawId)}}})}
 function loadScript(a){return new Promise((e,t)=>{if(document.querySelector(`script[src="${a}"]`))return e();let n=document.createElement("script");n.src=a;n.onload=e;n.onerror=t;document.head.appendChild(n)})}
 function connectTo(t,silent=!1){
   // t is the canonical friend key; use stored peerId if available for actual network connect
