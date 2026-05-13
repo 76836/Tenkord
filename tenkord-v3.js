@@ -29,16 +29,17 @@ function dbDel(store,key){return new Promise((res,rej)=>{let tx=DB.transaction(s
 function lsGet(e,t){return localStorage.getItem(e)||t}
 function lsGetJ(e,t){try{return JSON.parse(localStorage.getItem(e))||t}catch(e){return t}}
 function save(){localStorage.setItem("tk_friends",JSON.stringify(S.friends));localStorage.setItem("tk_queue",JSON.stringify(S.queue))}
+function saveLinkedDevices(){localStorage.setItem("tk_linked_devices",JSON.stringify(S.linkedDevices))}
 
 let S={myId:null,myName:lsGet("tk_name",""),myStatus:lsGet("tk_status",""),myAvatar:lsGet("tk_avatar",""),
-peer:null,conns:{},rtimers:{},backoff:{},
+peer:null,conns:{},rtimers:{},backoff:{},syncPeer:null,syncPeerId:null,syncConns:{},syncGen:0,
 friends:lsGetJ("tk_friends",{}),queue:lsGetJ("tk_queue",{}),
 view:"home",activeChat:null,fhTab:"all",typingTimers:{},
 qrStream:null,qrScannedId:null,ctxTarget:null,msgCtxTarget:null,mobView:"home",
 peerReady:!1,signalingOk:!1,accountId:null,peerId:null,receiverMode:"leader",takeoverUntil:0,promoteTimer:null,syncReady:!1,syncWaitTimer:null,peerGen:0,peerRestartTimer:null,peerReconnectTimer:null,peerRestartBackoff:3e3,
 replyTo:null,editMsg:null,
 deviceId:lsGet("tk_device_id","")||(() =>{let id=uuid();localStorage.setItem("tk_device_id",id);return id})(),
-linkedDevices:{},fileSyncOn:lsGet("tk_filesync","1")==="1",largeFileSkip:lsGet("tk_largeskip","1")==="1",
+linkedDevices:lsGetJ("tk_linked_devices",{}),fileSyncOn:lsGet("tk_filesync","1")==="1",largeFileSkip:lsGet("tk_largeskip","1")==="1",
 fileTransfers:{},pendingIdentityImport:null,identityPassMode:null
 };
 let gifDebounce=null;
@@ -47,8 +48,9 @@ let ICE_SERVERS=[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.googl
 
 // === Networking ===
 function devicePeerId(){return `${S.accountId}-${S.deviceId.replace(/[^a-zA-Z0-9]/g,"").slice(0,16)}`}
+function syncPeerId(){return `${devicePeerId()}-sync`}
 function updateReceiverStatus(){let lbl=document.getElementById("sig-lbl"),dot=document.getElementById("sig-dot"),ss=document.getElementById("sync-status");if(lbl)lbl.textContent=S.receiverMode==="leader"?"receiver online":"sync mode";if(dot)dot.className="sdot-sm ok";if(ss){ss.textContent=S.receiverMode==="leader"?"RECEIVER":"SYNC MODE";ss.className=`sync-badge ${S.receiverMode==="leader"?"synced":"syncing"}`;ss.style.display=""}}
-async function initPeer(){await CRYPTO.init();S.accountId="tk-"+CRYPTO.fingerprint;S.myId=S.accountId;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");installActivityLeaderHooks();installWakeRecoveryHooks();_startPeer("leader")}
+async function initPeer(){await CRYPTO.init();S.accountId="tk-"+CRYPTO.fingerprint;S.myId=S.accountId;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="connecting";updateTopBar();await loadScript("https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js");installActivityLeaderHooks();installWakeRecoveryHooks();startSyncPeer();_startPeer("leader")}
 function schedulePeerRestart(mode,delay){clearTimeout(S.peerRestartTimer);let gen=S.peerGen;S.peerRestartTimer=setTimeout(()=>{if(gen===S.peerGen)_startPeer(mode||S.receiverMode)},delay)}
 function _startPeer(mode="leader",t=0){clearTimeout(S.peerRestartTimer);clearTimeout(S.peerReconnectTimer);let old=S.peer;if(old){try{old.removeAllListeners&&old.removeAllListeners()}catch(e){}try{old.destroy()}catch(e){}}S.peer=null;S.peerReady=!1;S.signalingOk=!1;S.receiverMode=mode;S.peerId=mode==="leader"?S.accountId:devicePeerId();let gen=++S.peerGen;
 S.peer=new Peer(S.peerId,{config:{iceServers:ICE_SERVERS},debug:0});
@@ -57,6 +59,12 @@ S.peer.on("connection",e=>{if(gen===S.peerGen)handleIncomingConn(e)});
 S.peer.on("disconnected",()=>{if(gen!==S.peerGen)return;S.peerReady=!1;S.signalingOk=!1;document.getElementById("sig-dot").className="sdot-sm warn";document.getElementById("sig-lbl").textContent="reconnecting";clearTimeout(S.peerReconnectTimer);S.peerReconnectTimer=setTimeout(()=>{if(gen!==S.peerGen)return;try{if(S.peer&&!S.peer.destroyed&&S.peer.disconnected)S.peer.reconnect();else if(!S.peer||S.peer.destroyed)schedulePeerRestart(S.receiverMode,500)}catch(e){schedulePeerRestart(S.receiverMode,1500)}},1500)});
 S.peer.on("error",e=>{if(gen!==S.peerGen)return;console.warn("[NET]",e.type,e.message);if(e.type==="unavailable-id"){let next=S.receiverMode==="leader"?"sync":S.receiverMode;S.peerRestartBackoff=Math.min(S.peerRestartBackoff*1.5,3e4);schedulePeerRestart(next,700+Math.random()*S.peerRestartBackoff)}else if(["network","server-error","socket-error","socket-closed"].includes(e.type)){S.peerReady=!1;S.signalingOk=!1;document.getElementById("sig-dot").className="sdot-sm";document.getElementById("sig-lbl").textContent="offline";S.peerRestartBackoff=Math.min(S.peerRestartBackoff*1.5,3e4);schedulePeerRestart(S.receiverMode,S.peerRestartBackoff)}else if(e.type==="peer-unavailable"){let m=e.message?.match(/Could not connect to peer ([^\s]+)/);if(m){if(m[1]===S.accountId&&S.receiverMode==="sync")schedulePromotion();else schedRec(m[1],15e3)}}})}
 function loadScript(a){return new Promise((e,t)=>{if(document.querySelector(`script[src="${a}"]`))return e();let n=document.createElement("script");n.src=a;n.onload=e;n.onerror=t;document.head.appendChild(n)})}
+
+function startSyncPeer(){let old=S.syncPeer;if(old){try{old.removeAllListeners&&old.removeAllListeners()}catch(e){}try{old.destroy()}catch(e){}}S.syncPeerId=syncPeerId();let gen=++S.syncGen;S.syncPeer=new Peer(S.syncPeerId,{config:{iceServers:ICE_SERVERS},debug:0});S.syncPeer.on("open",()=>{if(gen!==S.syncGen)return;connectKnownSyncDevices();renderDeviceList()});S.syncPeer.on("connection",c=>{if(gen===S.syncGen)setupSyncConn(c)});S.syncPeer.on("disconnected",()=>setTimeout(()=>{if(gen===S.syncGen&&S.syncPeer&&!S.syncPeer.destroyed)try{S.syncPeer.reconnect()}catch(e){setTimeout(startSyncPeer,1500)}},1500));S.syncPeer.on("error",e=>{console.warn("[SYNC]",e.type,e.message);if(["network","server-error","socket-error","socket-closed","unavailable-id"].includes(e.type))setTimeout(()=>{if(gen===S.syncGen)startSyncPeer()},3000+Math.random()*4000)})}
+function setupSyncConn(c){c.on("open",async()=>{S.syncConns[c.peer]=c;let ts=Date.now().toString(),sig=await CRYPTO.sign(S.accountId+ts);send(c,{type:"handshake",id:S.accountId,peerId:S.peerId,syncPeerId:S.syncPeerId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId,receiverMode:S.receiverMode,syncOnly:true})});c.on("data",e=>handleData(c.peer,e));c.on("close",()=>{let p=c.peer;delete S.syncConns[p];if(S.linkedDevices[p]){S.linkedDevices[p].online=false;saveLinkedDevices();renderDeviceList()}setTimeout(()=>connectSyncTo(p),3000+Math.random()*5000)});c.on("error",()=>{let p=c.peer;delete S.syncConns[p];setTimeout(()=>connectSyncTo(p),5000+Math.random()*5000)})}
+function connectSyncTo(id){if(!id||id===S.syncPeerId||S.syncConns[id]?.open||!S.syncPeer||S.syncPeer.destroyed)return;try{setupSyncConn(S.syncPeer.connect(id,{reliable:true,metadata:{sync:true,accountId:S.accountId,from:S.syncPeerId}}))}catch(e){}}
+function connectKnownSyncDevices(){Object.values(S.linkedDevices).forEach(d=>connectSyncTo(d.syncPeerId||d.peerId));}
+function getDeviceConn(id){return S.syncConns[id]||S.conns[id]}
 function connectTo(t,silent=!1){if(S.peer&&t&&t!==S.peerId&&!S.conns[t]?.open)if(S.peerReady)try{if(!silent)setLoader(!0,"Connecting to "+(S.friends[t]?.name||t.slice(-8))+"...");setupConn(S.peer.connect(t,{reliable:!0,metadata:{from:S.peerId,accountId:S.accountId,name:S.myName}}))}catch(e){setLoader(!1);schedRec(t,5e3)}else schedRec(t,3e3)}
 function reconnectAll(){if(S.receiverMode!=="leader")return;Object.keys(S.friends).forEach(e=>{if(!S.conns[e]?.open&&!S.friends[e].pending)schedRec(e,500+1e3*Math.random())})}
 function schedRec(e,t){if(!S.rtimers[e]){t=t??Math.min(1.5*(S.backoff[e]||2e3),12e4);S.backoff[e]=t;S.rtimers[e]=setTimeout(()=>{delete S.rtimers[e];if(!S.conns[e]?.open&&S.friends[e]&&!S.friends[e].pending)connectTo(e,!0)},t)}}
@@ -68,7 +76,7 @@ function handleIncomingConn(e){if(S.conns[e.peer]?.open){if((S.peerId||S.myId)<e
 
 function setupConn(n){n.on("open",async()=>{setLoader(!1);S.conns[n.peer]=n;S.backoff[n.peer]=2e3;
 let ts=Date.now().toString(),sig=await CRYPTO.sign(S.accountId+ts);
-send(n,{type:"handshake",id:S.accountId,peerId:S.peerId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId,receiverMode:S.receiverMode});
+send(n,{type:"handshake",id:S.accountId,peerId:S.peerId,syncPeerId:S.syncPeerId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId,receiverMode:S.receiverMode});
 if(S.friends[n.peer]){S.friends[n.peer].online=!0;save();renderFriendPanel();renderFriendsHome();renderMembers()}
 processQueue(n.peer);setTimeout(()=>{if(!isSameAccount(n.peer))requestSync(n.peer)},600)});
 n.on("data",e=>handleData(n.peer,e));
@@ -97,25 +105,26 @@ async function clearQueue(e){let q=S.queue[e]||[];delete S.queue[e];localStorage
 async function processQueue(t){let c=S.conns[t];if(c?.open&&S.queue[t]){let q=S.queue[t];delete S.queue[t];localStorage.setItem("tk_queue",JSON.stringify(S.queue));renderQueue();q.forEach(m=>send(c,m))}}
 
 // === Cross-device sync ===
-function isSameAccount(peerId){return S.linkedDevices[peerId]?.sameAccount===!0}
-function broadcastToLinkedDevices(packet,skip){Object.entries(S.linkedDevices).forEach(([d,i])=>{if(d!==skip&&i.sameAccount&&S.conns[d]?.open)send(S.conns[d],packet)})}
+function isSameAccount(peerId){return S.linkedDevices[peerId]?.sameAccount===!0||Object.values(S.linkedDevices).some(d=>d.sameAccount&&(d.peerId===peerId||d.syncPeerId===peerId))}
+function broadcastToLinkedDevices(packet,skip){Object.entries(S.linkedDevices).forEach(([d,i])=>{let c=getDeviceConn(i.syncPeerId||d);if(d!==skip&&i.peerId!==skip&&i.syncPeerId!==skip&&i.sameAccount&&c?.open)send(c,packet)})}
 function syncMessageToDevices(msg,skip){broadcastToLinkedDevices({type:"device-sync-response",messages:[msg],total:1,offset:0},skip)}
 async function requestSync(peerId){let msgs=await dbGetAll("messages","chat",peerId);let ids=msgs.map(m=>m.id);send(S.conns[peerId],{type:"sync-request",knownIds:ids,deviceId:S.deviceId})}
 async function handleSyncRequest(from,data){let msgs=await dbGetAll("messages","chat",from);let missing=msgs.filter(m=>!data.knownIds.includes(m.id));if(missing.length)send(S.conns[from],{type:"sync-response",messages:missing})}
 async function handleSyncResponse(from,data){let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}if(count>0){toast(`Synced ${count} messages`);if(S.activeChat?.id===from)renderMessages()}}
 function mergeMessage(existing,incoming){if(!existing)return{msg:{...incoming},changed:!0};let out={...existing},changed=!1;["chatId","author","avatar","text","fileId","fileName","fileSize","fileType","mediaUrl"].forEach(k=>{if((out[k]===undefined||out[k]===null||out[k]==="")&&incoming[k]!==undefined&&incoming[k]!==null&&incoming[k]!==""){out[k]=incoming[k];changed=!0}});["ts","editedAt"].forEach(k=>{if((incoming[k]||0)>(out[k]||0)){out[k]=incoming[k];changed=!0}});if(incoming.deleted&&!out.deleted){out.deleted=true;out.text=incoming.text||out.text||"[Message deleted]";out.mediaUrl=incoming.mediaUrl||out.mediaUrl;out.fileId=incoming.fileId||out.fileId;changed=!0}if(incoming.verified&&!out.verified){out.verified=true;changed=!0}if(incoming.self&&!out.self){out.self=true;changed=!0}let edits=[...(out.edits||[])];(incoming.edits||[]).forEach(e=>{if(!edits.some(x=>x.ts===e.ts&&x.text===e.text)){edits.push(e);changed=!0}});if(edits.length)out.edits=edits.sort((a,b)=>(a.ts||0)-(b.ts||0));return{msg:out,changed}}
 async function upsertSyncedMessages(messages){let count=0;for(let m of messages||[]){let existing=await dbGet("messages",m.id),merged=mergeMessage(existing,m);if(merged.changed){await dbPut("messages",merged.msg);count++}}return count}
-async function syncWithOwnDevice(peerId){S.syncReady=!1;let allMsgs=await dbGetAll("messages");send(S.conns[peerId],{type:"device-sync-request",count:allMsgs.length,deviceId:S.deviceId})}
-async function sendDeviceSnapshot(to){let allMsgs=await dbGetAll("messages");for(let i=0;i<allMsgs.length;i+=50)send(S.conns[to],{type:"device-sync-response",messages:allMsgs.slice(i,i+50),total:allMsgs.length,offset:i});send(S.conns[to],{type:"device-sync-done",total:allMsgs.length,deviceId:S.deviceId,friends:S.friends})}
+async function syncWithOwnDevice(peerId){S.syncReady=!1;let allMsgs=await dbGetAll("messages"),c=getDeviceConn(peerId);send(c,{type:"device-sync-request",count:allMsgs.length,deviceId:S.deviceId})}
+async function sendDeviceSnapshot(to){let allMsgs=await dbGetAll("messages"),c=getDeviceConn(to);for(let i=0;i<allMsgs.length;i+=50)send(c,{type:"device-sync-response",messages:allMsgs.slice(i,i+50),total:allMsgs.length,offset:i});send(c,{type:"device-sync-done",total:allMsgs.length,deviceId:S.deviceId,friends:S.friends,devices:S.linkedDevices})}
 async function handleDeviceSyncRequest(from,data){await sendDeviceSnapshot(from)}
 async function handleDeviceSyncResponse(from,data){let count=await upsertSyncedMessages(data.messages);if(count>0){let ss=document.getElementById("sync-status");if(ss){ss.textContent="SYNCED";ss.className="sync-badge synced";ss.style.display="";if(S.receiverMode==="leader")setTimeout(()=>ss.style.display="none",3000);else setTimeout(updateReceiverStatus,1200)}if(S.activeChat)renderMessages();renderFriendPanel()}}
 function mergeDeviceFriends(friends){let changed=false;Object.entries(friends||{}).forEach(([id,inc])=>{if(id===S.accountId||id===S.peerId||isSameAccount(id))return;let cur=S.friends[id];if(!cur){S.friends[id]={...inc,online:!!S.conns[id]?.open};changed=true;return}["name","avatar","status","pubKey","lastMsg"].forEach(k=>{if((cur[k]===undefined||cur[k]===null||cur[k]==="")&&inc[k]){cur[k]=inc[k];changed=true}});if(inc.verified&&!cur.verified){cur.verified=true;changed=true}if(inc.pending===false&&cur.pending){cur.pending=false;changed=true}cur.unread=Math.max(cur.unread||0,inc.unread||0)});if(changed){save();renderFriendPanel();renderFriendsHome();renderMembers()}}
-function handleDeviceSyncDone(from,data){if(isSameAccount(from)){mergeDeviceFriends(data.friends);S.syncReady=true;updateReceiverStatus();toast("Device sync complete")}}
-async function relayPendingForAccount(friendId){if(!S.conns[friendId]?.open)return;Object.entries(S.linkedDevices).forEach(([devPeer,info])=>{if(info.sameAccount&&S.conns[devPeer]?.open){send(S.conns[devPeer],{type:"relay-check",friendId})}})}
+function mergeLinkedDevices(devices){let changed=false;Object.entries(devices||{}).forEach(([id,d])=>{if(d.deviceId===S.deviceId||id===S.peerId||id===S.syncPeerId)return;let key=d.syncPeerId||id,cur=S.linkedDevices[key]||{};S.linkedDevices[key]={...cur,...d,sameAccount:true,online:!!getDeviceConn(key)};changed=true;connectSyncTo(S.linkedDevices[key].syncPeerId||key)});if(changed){saveLinkedDevices();renderDeviceList()}}
+function handleDeviceSyncDone(from,data){if(isSameAccount(from)){mergeDeviceFriends(data.friends);mergeLinkedDevices(data.devices);S.syncReady=true;updateReceiverStatus();toast("Device sync complete")}}
+async function relayPendingForAccount(friendId){if(!S.conns[friendId]?.open)return;Object.entries(S.linkedDevices).forEach(([devPeer,info])=>{let c=getDeviceConn(info.syncPeerId||devPeer);if(info.sameAccount&&c?.open){send(c,{type:"relay-check",friendId})}})}
 function requestHistoryFromFriend(){let peerId=document.getElementById("import-hist-peer")?.value.trim();if(!peerId)return toast("Enter a peer ID");if(!S.conns[peerId]?.open)return toast("Not connected to that peer");send(S.conns[peerId],{type:"history-request",requesterId:S.myId});toast("History requested...")}
 async function handleHistoryRequest(from){if(!S.friends[from])return;let msgs=await dbGetAll("messages","chat",from);let bundle=JSON.stringify(msgs);let sig=await CRYPTO.sign(bundle);send(S.conns[from],{type:"history-response",messages:msgs,sig,pubKey:CRYPTO.pubKeyRaw})}
 async function handleHistoryResponse(from,data){let verified=await CRYPTO.verify(JSON.stringify(data.messages),data.sig,data.pubKey);if(!verified)return toast("History verification failed!");let count=0;for(let m of data.messages){let existing=await dbGet("messages",m.id);if(!existing){await dbPut("messages",m);count++}}toast(`Imported ${count} messages from friend`);if(S.activeChat)renderMessages()}
-async function broadcastProfile(){let ts=Date.now().toString(),sig=await CRYPTO.sign(S.accountId+ts);let msg={type:"handshake",id:S.accountId,peerId:S.peerId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId,receiverMode:S.receiverMode};Object.values(S.conns).forEach(c=>send(c,msg))}
+async function broadcastProfile(){let ts=Date.now().toString(),sig=await CRYPTO.sign(S.accountId+ts);let msg={type:"handshake",id:S.accountId,peerId:S.peerId,syncPeerId:S.syncPeerId,name:S.myName,avatar:S.myAvatar,status:S.myStatus,pubKey:CRYPTO.pubKeyRaw,ts,sig,deviceId:S.deviceId,receiverMode:S.receiverMode};Object.values(S.conns).forEach(c=>send(c,msg));Object.values(S.syncConns).forEach(c=>send(c,msg))}
 
 // === MESSAGE HANDLING ===
 async function handleData(t,n){
@@ -126,8 +135,10 @@ async function handleData(t,n){
       if(!ok){S.conns[t]?.close();break}
       let sameAccount=n.pubKey===CRYPTO.pubKeyRaw;
       if(sameAccount){
-        S.linkedDevices[t]={sameAccount:true,deviceId:n.deviceId,online:true,name:n.name||t.slice(-8),receiverMode:n.receiverMode||"sync",peerId:n.peerId||t,lastSeen:Date.now()};
-        renderDeviceList();updateReceiverStatus();
+        if(n.deviceId===S.deviceId)break;
+        let devKey=n.syncPeerId||t;
+        S.linkedDevices[devKey]={sameAccount:true,deviceId:n.deviceId,online:true,name:n.name||t.slice(-8),receiverMode:n.receiverMode||"sync",peerId:n.peerId||t,syncPeerId:n.syncPeerId||devKey,lastSeen:Date.now()};
+        saveLinkedDevices();connectSyncTo(n.syncPeerId||devKey);renderDeviceList();updateReceiverStatus();
         syncWithOwnDevice(t);
         break;
       }
@@ -221,8 +232,9 @@ async function handleData(t,n){
 
 async function relayQueuedForDevice(friendId){
   Object.entries(S.linkedDevices).forEach(([devPeer,info])=>{
-    if(info.sameAccount&&S.conns[devPeer]?.open)
-      send(S.conns[devPeer],{type:"relay-check",friendId});
+    let c=getDeviceConn(info.syncPeerId||devPeer);
+    if(info.sameAccount&&c?.open)
+      send(c,{type:"relay-check",friendId});
   });
 }
 
