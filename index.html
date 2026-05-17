@@ -11,7 +11,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<link rel="stylesheet" href="tenkord-v3.css">
+<link rel="stylesheet" href="tenkord-v3.css?v=4">
 </head>
 <body>
 <div id="toast"></div>
@@ -349,7 +349,7 @@
   </div>
 </div>
 
-<script src="tenkord-v3.js"></script>
+<script src="tenkord-v3.js?v=4"></script>
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').then(r=>console.log('SW registered')).catch(e=>console.warn('SW failed',e)));
