@@ -1,8 +1,9 @@
-const CACHE = "tenkord-v15";
+const CACHE = "tenkord-v16";
 const ASSETS = [
   "./",
   "./index.html",
   "./add.html",
+  "./invite.html",
   "./tenkord-v3.css",
   "./tenkord-v3.js",
   "./manifest.json",

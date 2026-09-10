@@ -1519,7 +1519,7 @@ function inviteUrlFor(id) {
   if (!id) return "";
   const b64 = btoa(unescape(encodeURIComponent(id))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const base = (location.origin + location.pathname).replace(/\/index\.html$/, "/").replace(/\/?$/, "/");
-  return base + "add.html?id=" + b64;
+  return base + "invite.html?id=" + b64;
 }
 
 function esc(s) {
