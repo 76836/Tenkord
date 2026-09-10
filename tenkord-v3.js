@@ -326,12 +326,32 @@ function setSig(cls, text) {
 }
 
 function _joinOwnRoom() {
-  _joinRoom(S.myId, false);
+  // Always ensure we are in our identity room so sibling devices can find us
+  if (!S._rooms[S.myId]) {
+    _joinRoom(S.myId, false);
+  }
   S.peerReady = true;
   S.signalingOk = true;
   setSig("ok", "connected");
   updateTopBar();
   reconnectAll();
+  startLinkedSyncLoop();
+  // Soft re-announce: if no linked devices yet, leave/rejoin own room once after a delay
+  // to catch peers that joined before our signaling was ready
+  if (!S._selfRejoinTried) {
+    S._selfRejoinTried = true;
+    setTimeout(() => {
+      const hasLink = Object.values(S.linkedDevices || {}).some(d => d.online);
+      if (hasLink) return;
+      try {
+        const room = S._rooms[S.myId];
+        if (room && typeof room.leave === "function") room.leave();
+      } catch (_) {}
+      delete S._rooms[S.myId];
+      _joinRoom(S.myId, false);
+      console.log("[NET] re-joined own room for device discovery");
+    }, 8000);
+  }
 }
 
 function _joinRoom(roomId, initiator) {
@@ -359,6 +379,7 @@ function _joinRoom(roomId, initiator) {
       id: S.myId,
       name: S.myName,
       avatar: S.myAvatar,
+      banner: S.myBanner,
       status: S.myStatus,
       pubKey: CRYPTO.pubKeyRaw,
       ts,
@@ -399,6 +420,10 @@ function _joinRoom(roomId, initiator) {
       setLoader(false);
 
       if (isSelf) {
+        if (data.deviceId === S.deviceId) {
+          console.log("[NET] ignoring same deviceId echo");
+          return;
+        }
         S.linkedDevices[connKey] = {
           sameAccount: true,
           deviceId: data.deviceId,
@@ -407,14 +432,16 @@ function _joinRoom(roomId, initiator) {
           lastSeen: Date.now(),
           appVersion: data.appVersion
         };
-        renderDeviceList();
-        const ss = document.getElementById("sync-status");
-        if (ss) {
-          ss.textContent = "SYNCING";
-          ss.className = "sync-badge syncing";
-          ss.style.display = "";
+        // adopt profile fields from sibling if we lack them
+        if (data.name || data.avatar || data.status) {
+          mergeProfileFromDevice({ name: data.name, avatar: data.avatar, status: data.status, banner: data.banner });
         }
-        setTimeout(() => syncWithOwnDevice(connKey), 600);
+        renderDeviceList();
+        setSyncBadge("syncing");
+        startLinkedSyncLoop();
+        // Bidirectional full sync shortly after link
+        setTimeout(() => syncWithOwnDevice(connKey), 400);
+        setTimeout(() => syncWithOwnDevice(connKey), 2500);
       } else {
         if (S.friends[connKey]) {
           Object.assign(S.friends[connKey], {
@@ -589,36 +616,102 @@ async function processQueue(peerId) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-device + friend sync
+// Cross-device + friend sync (full same-identity mesh)
 // ---------------------------------------------------------------------------
 function isSameAccount(peerId) {
   return S.linkedDevices[peerId]?.sameAccount === true;
 }
 
+function setSyncBadge(state) {
+  const ss = document.getElementById("sync-status");
+  if (!ss) return;
+  if (!state) { ss.style.display = "none"; return; }
+  ss.style.display = "";
+  if (state === "syncing") {
+    ss.textContent = "SYNCING";
+    ss.className = "sync-badge syncing";
+  } else if (state === "synced") {
+    ss.textContent = "SYNCED";
+    ss.className = "sync-badge synced";
+    setTimeout(() => { if (ss.textContent === "SYNCED") ss.style.display = "none"; }, 3200);
+  }
+}
+
+async function collectFullState() {
+  const messages = await dbGetAll("messages");
+  // Cap payload size: prefer newest messages if huge
+  messages.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const MAX_MSGS = 2000;
+  const msgs = messages.slice(0, MAX_MSGS);
+  return {
+    type: "device-full-sync",
+    v: PROTOCOL_VERSION,
+    deviceId: S.deviceId,
+    appVersion: APP_VERSION,
+    profile: {
+      name: S.myName,
+      status: S.myStatus,
+      avatar: S.myAvatar,
+      banner: S.myBanner
+    },
+    friends: S.friends,
+    messages: msgs,
+    knownIds: msgs.map(m => m.id),
+    ts: Date.now()
+  };
+}
+
 async function requestSync(peerId) {
   if (peerId === S.myId || peerId.startsWith("self:")) return;
+  if (!S.conns[peerId]?.open) return;
   const msgs = await dbGetAll("messages", "chat", peerId);
   const ids = msgs.map(m => m.id);
   send(S.conns[peerId], { type: "sync-request", v: PROTOCOL_VERSION, knownIds: ids, deviceId: S.deviceId });
 }
 
 async function syncWithOwnDevice(peerId) {
-  const all = await dbGetAll("messages");
-  const ids = all.map(m => m.id);
+  if (!S.conns[peerId]?.open) return;
+  setSyncBadge("syncing");
+  const state = await collectFullState();
+  // Ask peer for anything we don't have, and send them our full snapshot
   send(S.conns[peerId], {
     type: "device-sync-request",
     v: PROTOCOL_VERSION,
-    knownIds: ids,
+    knownIds: state.knownIds,
     deviceId: S.deviceId,
-    friends: S.friends
+    friends: S.friends,
+    profile: state.profile,
+    appVersion: APP_VERSION,
+    ts: Date.now()
   });
+  // Also proactively push our full state (chunked messages)
+  send(S.conns[peerId], {
+    type: "device-sync-friends",
+    v: PROTOCOL_VERSION,
+    friends: S.friends,
+    profile: state.profile
+  });
+  const messages = state.messages;
+  if (!messages.length) {
+    send(S.conns[peerId], { type: "device-sync-response", v: PROTOCOL_VERSION, messages: [], total: 0, offset: 0, done: true });
+  } else {
+    for (let i = 0; i < messages.length; i += 30) {
+      send(S.conns[peerId], {
+        type: "device-sync-response",
+        v: PROTOCOL_VERSION,
+        messages: messages.slice(i, i + 30),
+        total: messages.length,
+        offset: i,
+        done: i + 30 >= messages.length
+      });
+    }
+  }
 }
 
 async function handleSyncRequest(from, data) {
   const msgs = await dbGetAll("messages", "chat", from);
-  const missing = msgs.filter(m => !data.knownIds.includes(m.id));
+  const missing = msgs.filter(m => !(data.knownIds || []).includes(m.id));
   if (missing.length) {
-    // chunk large responses
     for (let i = 0; i < missing.length; i += 40) {
       send(S.conns[from], { type: "sync-response", v: PROTOCOL_VERSION, messages: missing.slice(i, i + 40) });
     }
@@ -632,72 +725,174 @@ async function handleSyncResponse(from, data) {
     if (!existing) {
       await dbPut("messages", m);
       count++;
+    } else if ((m.editedAt || 0) > (existing.editedAt || 0) || (m.deleted && !existing.deleted)) {
+      await dbPut("messages", { ...existing, ...m });
+      count++;
     }
   }
   if (count > 0) {
-    toast(`Synced ${count} messages`);
+    toast("Synced " + count + " messages");
     if (S.activeChat?.id === from) renderMessages();
   }
 }
 
-async function handleDeviceSyncRequest(from, data) {
-  // Merge their friends (don't overwrite richer local data)
-  if (data.friends) {
-    for (const [id, f] of Object.entries(data.friends)) {
-      if (!S.friends[id]) {
-        S.friends[id] = { ...f, online: false, pending: f.pending || false };
-      } else {
-        // keep local name/avatar if set, but adopt pubKey if missing
-        if (!S.friends[id].pubKey && f.pubKey) S.friends[id].pubKey = f.pubKey;
-      }
+function mergeFriendMaps(remoteFriends) {
+  if (!remoteFriends) return 0;
+  let n = 0;
+  for (const [id, f] of Object.entries(remoteFriends)) {
+    if (id === S.myId) continue;
+    if (!S.friends[id]) {
+      S.friends[id] = {
+        name: f.name || id.slice(-8),
+        avatar: f.avatar || "",
+        status: f.status || "",
+        pubKey: f.pubKey || "",
+        verified: !!f.verified,
+        online: false,
+        pending: !!f.pending,
+        unread: 0,
+        lastMsg: f.lastMsg || ""
+      };
+      n++;
+    } else {
+      const local = S.friends[id];
+      // Prefer non-empty remote fields when local is empty; never wipe richer local data
+      if (!local.name && f.name) { local.name = f.name; n++; }
+      if (!local.avatar && f.avatar) { local.avatar = f.avatar; n++; }
+      if (!local.status && f.status) { local.status = f.status; n++; }
+      if (!local.pubKey && f.pubKey) { local.pubKey = f.pubKey; n++; }
+      if (f.verified) local.verified = true;
+      if (f.pending === false) local.pending = false;
     }
-    saveFriendsAndQueue();
-    renderFriendPanel();
-    renderFriendsHome();
   }
+  return n;
+}
+
+function mergeProfileFromDevice(profile) {
+  if (!profile) return false;
+  let changed = false;
+  // Same identity: take remote name/status if local is blank; avatar/banner if local empty
+  if (profile.name && (!S.myName || S.myName === "Set your name…")) {
+    S.myName = profile.name;
+    localStorage.setItem("tk_name", profile.name);
+    changed = true;
+  }
+  if (profile.status && !S.myStatus) {
+    S.myStatus = profile.status;
+    localStorage.setItem("tk_status", profile.status);
+    changed = true;
+  }
+  if (profile.avatar && !S.myAvatar) {
+    S.myAvatar = profile.avatar;
+    localStorage.setItem("tk_avatar", profile.avatar);
+    changed = true;
+  }
+  if (profile.banner && !S.myBanner) {
+    S.myBanner = profile.banner;
+    localStorage.setItem("tk_banner", profile.banner);
+    changed = true;
+  }
+  if (changed) {
+    updateTopBar();
+    try { refreshYouCard(); } catch (_) {}
+  }
+  return changed;
+}
+
+async function handleDeviceSyncRequest(from, data) {
+  setSyncBadge("syncing");
+  mergeFriendMaps(data.friends);
+  mergeProfileFromDevice(data.profile);
+  saveFriendsAndQueue();
+  renderFriendPanel();
+  renderFriendsHome();
+  renderMembers();
+
+  // Reply with our friends + profile + messages they don't know
+  send(S.conns[from], {
+    type: "device-sync-friends",
+    v: PROTOCOL_VERSION,
+    friends: S.friends,
+    profile: {
+      name: S.myName,
+      status: S.myStatus,
+      avatar: S.myAvatar,
+      banner: S.myBanner
+    }
+  });
 
   const all = await dbGetAll("messages");
-  const missing = all.filter(m => !data.knownIds.includes(m.id));
-  send(S.conns[from], { type: "device-sync-friends", v: PROTOCOL_VERSION, friends: S.friends });
+  const known = new Set(data.knownIds || []);
+  const missing = all.filter(m => !known.has(m.id));
+  missing.sort((a, b) => (b.ts || 0) - (a.ts || 0));
   if (missing.length) {
-    for (let i = 0; i < missing.length; i += 40) {
+    for (let i = 0; i < missing.length; i += 30) {
       send(S.conns[from], {
         type: "device-sync-response",
         v: PROTOCOL_VERSION,
-        messages: missing.slice(i, i + 40),
+        messages: missing.slice(i, i + 30),
         total: missing.length,
-        offset: i
+        offset: i,
+        done: i + 30 >= missing.length
       });
     }
   } else {
-    // still notify synced
-    send(S.conns[from], { type: "device-sync-response", v: PROTOCOL_VERSION, messages: [], total: 0, offset: 0 });
+    send(S.conns[from], { type: "device-sync-response", v: PROTOCOL_VERSION, messages: [], total: 0, offset: 0, done: true });
   }
 }
 
 async function handleDeviceSyncResponse(from, data) {
   let count = 0;
   for (const m of data.messages || []) {
+    if (!m || !m.id) continue;
     const existing = await dbGet("messages", m.id);
     if (!existing) {
+      // Mark as not self on this device if author is not us by id field
+      const copy = { ...m, self: !!m.self && m.chatId !== S.myId };
+      // Preserve self flag if message was authored on same account (any device)
+      // self means "sent by me" for UI alignment — same identity => keep if chat is outbound
       await dbPut("messages", m);
       count++;
-    } else if ((m.editedAt || 0) > (existing.editedAt || 0) || (m.deleted && !existing.deleted)) {
-      await dbPut("messages", { ...existing, ...m });
-      count++;
+    } else {
+      const newerEdit = (m.editedAt || 0) > (existing.editedAt || 0);
+      const newlyDeleted = m.deleted && !existing.deleted;
+      if (newerEdit || newlyDeleted || (m.ts || 0) > (existing.ts || 0) && m.text !== existing.text) {
+        await dbPut("messages", { ...existing, ...m });
+        count++;
+      }
     }
   }
-  const ss = document.getElementById("sync-status");
-  if (ss) {
-    ss.textContent = "SYNCED";
-    ss.className = "sync-badge synced";
-    ss.style.display = "";
-    setTimeout(() => { ss.style.display = "none"; }, 2800);
+  if (data.done || (data.offset != null && data.total != null && data.offset + (data.messages || []).length >= data.total) || !(data.messages || []).length) {
+    setSyncBadge("synced");
   }
   if (count > 0) {
     if (S.activeChat) renderMessages();
     renderFriendPanel();
+    renderFriendsHome();
   }
+}
+
+function handleDeviceSyncFriends(from, data) {
+  const n = mergeFriendMaps(data.friends);
+  mergeProfileFromDevice(data.profile);
+  if (n > 0) {
+    saveFriendsAndQueue();
+    renderFriendPanel();
+    renderFriendsHome();
+    renderMembers();
+  }
+}
+
+// Periodic mesh sync while linked devices are online
+function startLinkedSyncLoop() {
+  if (S._linkedSyncTimer) return;
+  S._linkedSyncTimer = setInterval(() => {
+    Object.entries(S.linkedDevices || {}).forEach(([key, info]) => {
+      if (info.sameAccount && S.conns[key]?.open) {
+        syncWithOwnDevice(key);
+      }
+    });
+  }, 45000);
 }
 
 function requestHistoryFromFriend() {
@@ -820,17 +1015,7 @@ async function handleData(from, n) {
     case "sync-response": handleSyncResponse(from, n); break;
     case "device-sync-request": handleDeviceSyncRequest(from, n); break;
     case "device-sync-response": handleDeviceSyncResponse(from, n); break;
-    case "device-sync-friends": {
-      if (n.friends) {
-        for (const [id, f] of Object.entries(n.friends)) {
-          if (!S.friends[id]) S.friends[id] = { ...f, online: false };
-        }
-        saveFriendsAndQueue();
-        renderFriendPanel();
-        renderFriendsHome();
-      }
-      break;
-    }
+    case "device-sync-friends": handleDeviceSyncFriends(from, n); break;
     case "history-request": handleHistoryRequest(from); break;
     case "history-response": handleHistoryResponse(from, n); break;
     case "file-offer": handleFileOffer(from, n); break;
@@ -1974,6 +2159,7 @@ async function exportIdentity(pass) {
       name: S.myName,
       status: S.myStatus,
       avatar: S.myAvatar,
+      banner: S.myBanner,
       deviceId: S.deviceId
     });
     const blob = new Blob([bundle], { type: "application/json" });
@@ -1997,6 +2183,8 @@ async function importIdentity(pass) {
     if (meta.name) { S.myName = meta.name; localStorage.setItem("tk_name", meta.name); }
     if (meta.status) { S.myStatus = meta.status; localStorage.setItem("tk_status", meta.status); }
     if (meta.avatar) { S.myAvatar = meta.avatar; localStorage.setItem("tk_avatar", meta.avatar); }
+    if (meta.banner) { S.myBanner = meta.banner; localStorage.setItem("tk_banner", meta.banner); }
+    // Keep this device's deviceId — do not clobber with exporter's deviceId
     S.pendingIdentityImport = null;
     closeIdentityPassModal();
     toast("Identity imported — reloading…");
@@ -2254,6 +2442,7 @@ async function boot() {
     updateTopBar();
     refreshYouCard();
     renderFriendPanel();
+    startLinkedSyncLoop();
     renderFriendsHome();
     renderMembers();
     buildEmojiStrip();

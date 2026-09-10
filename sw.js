@@ -1,11 +1,11 @@
-const CACHE = "tenkord-v16";
+const CACHE = "tenkord-v17";
 const ASSETS = [
   "./",
   "./index.html",
   "./add.html",
   "./invite.html",
-  "./tenkord-v3.css",
-  "./tenkord-v3.js",
+  "./tenkord-v17.css",
+  "./tenkord-v17.js",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png"
