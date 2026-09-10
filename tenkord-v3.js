@@ -2265,7 +2265,11 @@ async function boot() {
     const raw = q.get("id");
     if (raw) {
       let peer = raw;
-      try { peer = decodeURIComponent(escape(atob(raw.replace(/-/g, "+").replace(/_/g, "/")))); } catch(_) {}
+      try {
+        let b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+        while (b64.length % 4) b64 += "=";
+        peer = decodeURIComponent(escape(atob(b64)));
+      } catch(_) {}
       if (peer && peer.startsWith("tk-")) {
         setTimeout(() => {
           openModal("add-friend-modal");

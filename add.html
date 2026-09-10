@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Add friend — Tenkord</title>
 <meta name="theme-color" content="#f5c400">
-<link rel="stylesheet" href="tenkord-v3.css?v=13">
+<link rel="stylesheet" href="tenkord-v3.css?v=14">
 <style>
   body { display:flex; align-items:center; justify-content:center; min-height:100dvh; padding:24px; }
   .card {
@@ -43,9 +43,15 @@
   let raw = params.get("id") || "";
   let peer = "";
   try {
-    peer = decodeURIComponent(escape(atob(raw.replace(/-/g, "+").replace(/_/g, "/"))));
+    let b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    peer = decodeURIComponent(escape(atob(b64)));
   } catch (e) {
-    try { peer = atob(raw); } catch (_) { peer = raw; }
+    try {
+      let b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+      while (b64.length % 4) b64 += "=";
+      peer = atob(b64);
+    } catch (_) { peer = raw; }
   }
   const el = document.getElementById("peer");
   const err = document.getElementById("err");
