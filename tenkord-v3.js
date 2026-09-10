@@ -436,7 +436,7 @@ function _joinRoom(roomId, initiator) {
             pending: true,
             unread: 0
           };
-          toast("👋 Friend request from " + (data.name || connKey.slice(-8)));
+          toast("Friend request from " + (data.name || connKey.slice(-8)));
         }
         saveFriendsAndQueue();
         renderFriendPanel();
@@ -1577,8 +1577,10 @@ async function openChat(id) {
   id = canonicalId(id);
   S.activeChat = { id, name: S.friends[id]?.name || id.slice(-8) };
   S.view = "chat";
-  document.getElementById("friends-home").style.display = "none";
-  document.getElementById("chat-view").style.display = "flex";
+  const fh = document.getElementById("friends-home");
+  const cv = document.getElementById("chat-view");
+  if (fh) fh.classList.remove("active");
+  if (cv) cv.classList.add("active");
   document.getElementById("hdr-name").textContent = S.activeChat.name;
   document.getElementById("hdr-sub").textContent = S.friends[id]?.online ? "Online" : "Offline";
   if (S.friends[id]) S.friends[id].unread = 0;
@@ -1593,17 +1595,20 @@ async function openChat(id) {
 
 function closeActiveChat() {
   S.activeChat = null;
-  document.getElementById("chat-view").style.display = "none";
+  const cvHide = document.getElementById("chat-view");
+  if (cvHide) cvHide.classList.remove("active");
 }
 
 function showFriendsHome() {
   document.getElementById("friends-home").style.display = "flex";
-  document.getElementById("chat-view").style.display = "none";
+  const cvHide = document.getElementById("chat-view");
+  if (cvHide) cvHide.classList.remove("active");
   S.view = "home";
   renderFriendsHome();
 }
 function hideFriendsHome() {
-  document.getElementById("friends-home").style.display = "none";
+  const fh3 = document.getElementById("friends-home");
+  if (fh3) fh3.classList.remove("active");
 }
 
 function goBack() {
@@ -1764,21 +1769,13 @@ function copyToClip(t) {
 }
 
 function openModal(id) {
-  document.getElementById(id)?.classList.add("open");
-  if (id === "profile-modal") {
-    document.getElementById("p-name").value = S.myName;
-    document.getElementById("p-status").value = S.myStatus;
-    buildEmojiStrip();
-    refreshAvPreview();
-    updateTopBar();
-    renderQR();
-    renderDeviceList();
-    document.getElementById("toggle-file-sync")?.classList.toggle("on", S.fileSyncOn);
-    document.getElementById("toggle-large-skip")?.classList.toggle("on", S.largeFileSkip);
-  }
+  const el = document.getElementById(id);
+  if (el) el.classList.add("open");
+}
 }
 function closeModal(id) {
-  document.getElementById(id)?.classList.remove("open");
+  const el = document.getElementById(id);
+  if (el) el.classList.remove("open");
 }
 function switchTab(el, modalId) {
   const modal = document.getElementById(modalId);
