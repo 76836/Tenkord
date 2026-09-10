@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Add friend — Tenkord</title>
 <meta name="theme-color" content="#f5c400">
-<link rel="stylesheet" href="tenkord-v3.css?v=14">
+<link rel="stylesheet" href="tenkord-v3.css?v=15">
 <style>
   body { display:flex; align-items:center; justify-content:center; min-height:100dvh; padding:24px; }
   .card {
@@ -38,28 +38,31 @@
     </div>
   </div>
 <script>
+function b64urlDecode(raw) {
+  if (!raw) return "";
+  let b64 = String(raw).replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4) b64 += "=";
+  try {
+    const bin = atob(b64);
+    // UTF-8 safe
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch (e) {
+    try { return atob(b64); } catch (_) { return raw; }
+  }
+}
 (function () {
   const params = new URLSearchParams(location.search);
-  let raw = params.get("id") || "";
-  let peer = "";
-  try {
-    let b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
-    while (b64.length % 4) b64 += "=";
-    peer = decodeURIComponent(escape(atob(b64)));
-  } catch (e) {
-    try {
-      let b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
-      while (b64.length % 4) b64 += "=";
-      peer = atob(b64);
-    } catch (_) { peer = raw; }
-  }
+  const raw = params.get("id") || "";
+  const peer = b64urlDecode(raw);
   const el = document.getElementById("peer");
   const err = document.getElementById("err");
+  console.log("invite raw=", raw, "peer=", peer);
   if (!peer || !/^tk-[a-f0-9]+$/i.test(peer)) {
     err.textContent = "Invalid or missing invite id.";
     err.classList.remove("hidden");
     document.getElementById("btn-add").disabled = true;
-    el.textContent = raw || "(none)";
+    el.textContent = peer || raw || "(none)";
   } else {
     el.textContent = peer;
   }
@@ -68,8 +71,10 @@
 function goAdd() {
   const peer = window._peer;
   if (!peer) return;
-  const b64 = btoa(unescape(encodeURIComponent(peer))).replace(/+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  // Open main app with query so it pre-fills add-friend
+  const bytes = new TextEncoder().encode(peer);
+  let bin = "";
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   location.href = "./index.html?id=" + encodeURIComponent(b64);
 }
 </script>
