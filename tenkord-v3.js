@@ -291,7 +291,8 @@ async function initPeer() {
   updateTopBar();
 
   try {
-    const mod = await import("https://esm.run/trystero@0.25.4");
+    // Trystero 0.25+ strategy-specific entry (Nostr relays)
+    const mod = await import("https://esm.run/trystero@0.25.4/nostr");
     window.trystero = { joinRoom: mod.joinRoom };
   } catch (e) {
     console.error("[NET] trystero load failed", e);
@@ -2116,7 +2117,10 @@ async function boot() {
     console.error("Boot failed", e);
     setSig("err", "error");
     setLoader(false);
-    toast("Failed to start: " + e.message);
+    const msg = (e && (e.message || e.toString())) || "unknown error";
+    toast("Failed to start: " + msg);
+    const lbl = document.getElementById("sig-lbl");
+    if (lbl) lbl.textContent = "error: " + msg.slice(0, 40);
   }
 }
 

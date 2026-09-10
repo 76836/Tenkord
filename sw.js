@@ -1,4 +1,4 @@
-const CACHE = "tenkord-v7";
+const CACHE = "tenkord-v8";
 const ASSETS = [
   "./",
   "./index.html",
