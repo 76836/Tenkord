@@ -397,6 +397,14 @@ function _joinRoom(roomId, initiator) {
   };
 
   action.onMessage = async (data, { peerId }) => {
+    // Register peer even if onPeerJoin has not fired yet (race with first message)
+    if (!S._peerMap[peerId]) {
+      S._peerMap[peerId] = {
+        roomId,
+        send: (msg) => action.send(msg, { target: peerId }),
+        open: true
+      };
+    }
     const entry = S._peerMap[peerId];
     if (!entry) return;
 
@@ -439,9 +447,11 @@ function _joinRoom(roomId, initiator) {
         renderDeviceList();
         setSyncBadge("syncing");
         startLinkedSyncLoop();
-        // Bidirectional full sync shortly after link
-        setTimeout(() => syncWithOwnDevice(connKey), 400);
-        setTimeout(() => syncWithOwnDevice(connKey), 2500);
+        toast("Linked device online — syncing…");
+        // Bidirectional full sync: immediate + retries
+        setTimeout(() => syncWithOwnDevice(connKey), 300);
+        setTimeout(() => syncWithOwnDevice(connKey), 1500);
+        setTimeout(() => syncWithOwnDevice(connKey), 5000);
       } else {
         if (S.friends[connKey]) {
           Object.assign(S.friends[connKey], {
@@ -540,8 +550,14 @@ function _connLost(connKey) {
 
 function send(conn, msg) {
   try {
-    if (conn?.open && conn.send) conn.send(msg);
-  } catch (_) {}
+    if (conn?.open && conn.send) {
+      conn.send(msg);
+      return true;
+    }
+  } catch (e) {
+    console.warn("[NET] send failed", msg?.type, e);
+  }
+  return false;
 }
 
 function broadcastToLinked(msg) {
@@ -670,42 +686,63 @@ async function requestSync(peerId) {
 }
 
 async function syncWithOwnDevice(peerId) {
-  if (!S.conns[peerId]?.open) return;
+  if (!S.conns[peerId]?.open) {
+    console.warn("[SYNC] no open conn for", peerId);
+    return;
+  }
   setSyncBadge("syncing");
-  const state = await collectFullState();
-  // Ask peer for anything we don't have, and send them our full snapshot
+  const profile = {
+    name: S.myName,
+    status: S.myStatus,
+    avatar: S.myAvatar,
+    banner: S.myBanner
+  };
+  // 1) Friends+profile first (small, critical) — send twice for reliability
+  const friendsPkt = {
+    type: "device-sync-friends",
+    v: PROTOCOL_VERSION,
+    friends: JSON.parse(JSON.stringify(S.friends || {})),
+    profile,
+    deviceId: S.deviceId,
+    ts: Date.now()
+  };
+  send(S.conns[peerId], friendsPkt);
+  setTimeout(() => {
+    if (S.conns[peerId]?.open) send(S.conns[peerId], friendsPkt);
+  }, 800);
+
+  // 2) Full request so peer can send us what we lack
+  const all = await dbGetAll("messages");
+  const knownIds = all.map(m => m.id);
   send(S.conns[peerId], {
     type: "device-sync-request",
     v: PROTOCOL_VERSION,
-    knownIds: state.knownIds,
+    knownIds,
     deviceId: S.deviceId,
-    friends: S.friends,
-    profile: state.profile,
+    friends: JSON.parse(JSON.stringify(S.friends || {})),
+    profile,
     appVersion: APP_VERSION,
     ts: Date.now()
   });
-  // Also proactively push our full state (chunked messages)
-  send(S.conns[peerId], {
-    type: "device-sync-friends",
-    v: PROTOCOL_VERSION,
-    friends: S.friends,
-    profile: state.profile
-  });
-  const messages = state.messages;
+
+  // 3) Push our messages in chunks
+  all.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const messages = all.slice(0, 2000);
   if (!messages.length) {
     send(S.conns[peerId], { type: "device-sync-response", v: PROTOCOL_VERSION, messages: [], total: 0, offset: 0, done: true });
   } else {
-    for (let i = 0; i < messages.length; i += 30) {
+    for (let i = 0; i < messages.length; i += 25) {
       send(S.conns[peerId], {
         type: "device-sync-response",
         v: PROTOCOL_VERSION,
-        messages: messages.slice(i, i + 30),
+        messages: messages.slice(i, i + 25),
         total: messages.length,
         offset: i,
-        done: i + 30 >= messages.length
+        done: i + 25 >= messages.length
       });
     }
   }
+  console.log("[SYNC] pushed friends=" + Object.keys(S.friends).length + " msgs=" + messages.length + " to " + peerId);
 }
 
 async function handleSyncRequest(from, data) {
@@ -801,12 +838,13 @@ function mergeProfileFromDevice(profile) {
 
 async function handleDeviceSyncRequest(from, data) {
   setSyncBadge("syncing");
-  mergeFriendMaps(data.friends);
+  const n = mergeFriendMaps(data.friends);
   mergeProfileFromDevice(data.profile);
   saveFriendsAndQueue();
   renderFriendPanel();
   renderFriendsHome();
   renderMembers();
+  if (n > 0) toast("Synced " + n + " friend" + (n === 1 ? "" : "s") + " from other device");
 
   // Reply with our friends + profile + messages they don't know
   send(S.conns[from], {
@@ -875,15 +913,18 @@ async function handleDeviceSyncResponse(from, data) {
 function handleDeviceSyncFriends(from, data) {
   const n = mergeFriendMaps(data.friends);
   mergeProfileFromDevice(data.profile);
+  // Always persist — even metadata-only updates
+  saveFriendsAndQueue();
+  renderFriendPanel();
+  renderFriendsHome();
+  renderMembers();
   if (n > 0) {
-    saveFriendsAndQueue();
-    renderFriendPanel();
-    renderFriendsHome();
-    renderMembers();
+    console.log("[SYNC] merged", n, "friends from", from);
+    toast("Synced " + n + " friend" + (n === 1 ? "" : "s") + " from other device");
   }
 }
 
-// Periodic mesh sync while linked devices are online
+// Periodic mesh sync + discovery while same-account devices should link
 function startLinkedSyncLoop() {
   if (S._linkedSyncTimer) return;
   S._linkedSyncTimer = setInterval(() => {
@@ -892,7 +933,39 @@ function startLinkedSyncLoop() {
         syncWithOwnDevice(key);
       }
     });
-  }, 45000);
+  }, 20000);
+
+  // Aggressive discovery for first 3 minutes after boot
+  if (S._discoverTimer) return;
+  let tries = 0;
+  S._discoverTimer = setInterval(() => {
+    tries++;
+    const onlineLinks = Object.values(S.linkedDevices || {}).filter(d => d.online && S.conns["self:" + d.deviceId]?.open);
+    if (onlineLinks.length > 0) {
+      // already linked — keep soft rejoin off
+      if (tries > 6) {
+        clearInterval(S._discoverTimer);
+        S._discoverTimer = null;
+      }
+      return;
+    }
+    // Force rejoin identity room so Nostr/WebRTC rediscovers siblings
+    try {
+      const room = S._rooms[S.myId];
+      if (room && typeof room.leave === "function") room.leave();
+    } catch (_) {}
+    delete S._rooms[S.myId];
+    // clear stale peer map entries for this room
+    Object.keys(S._peerMap).forEach(pid => {
+      if (S._peerMap[pid]?.roomId === S.myId) delete S._peerMap[pid];
+    });
+    _joinRoom(S.myId, false);
+    console.log("[NET] discovery rejoin #" + tries);
+    if (tries >= 12) {
+      clearInterval(S._discoverTimer);
+      S._discoverTimer = null;
+    }
+  }, 15000);
 }
 
 function requestHistoryFromFriend() {
