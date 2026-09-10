@@ -338,14 +338,14 @@ function _joinRoom(roomId, initiator) {
   const room = trystero.joinRoom(_trysteroConfig(), roomId);
   S._rooms[roomId] = room;
 
-  const [sendData, getData] = room.makeAction("tk");
-  room._send = sendData;
+  const action = room.makeAction("tk");
+  room._action = action;
 
-  room.onPeerJoin(async (peerId) => {
+  room.onPeerJoin = async (peerId) => {
     console.log("[NET] peer joined", roomId, peerId);
     S._peerMap[peerId] = {
       roomId,
-      send: (msg) => sendData(msg, peerId),
+      send: (msg) => action.send(msg, { target: peerId }),
       open: true
     };
     // Immediate handshake
@@ -364,16 +364,16 @@ function _joinRoom(roomId, initiator) {
       deviceId: S.deviceId,
       appVersion: APP_VERSION
     });
-  });
+  };
 
-  room.onPeerLeave((peerId) => {
+  room.onPeerLeave = (peerId) => {
     const entry = S._peerMap[peerId];
     if (entry?.connKey) _connLost(entry.connKey);
     delete S._peerMap[peerId];
     console.log("[NET] peer left", roomId, peerId);
-  });
+  };
 
-  getData(async (data, peerId) => {
+  action.onMessage = async (data, { peerId }) => {
     const entry = S._peerMap[peerId];
     if (!entry) return;
 
@@ -450,7 +450,7 @@ function _joinRoom(roomId, initiator) {
     // Only process after verified handshake
     if (!entry.connKey || !S.conns[entry.connKey]?.open) return;
     handleData(entry.connKey, data);
-  });
+  };
 
   if (initiator) {
     room._offlineTimer = setTimeout(() => {
