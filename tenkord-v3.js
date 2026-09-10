@@ -1696,7 +1696,7 @@ function refreshAvPreview() {
   if (S.myAvatar && (S.myAvatar.startsWith("data:") || S.myAvatar.startsWith("http"))) {
     e.innerHTML = `<img src="${S.myAvatar}">`;
   } else {
-    e.innerHTML = `<span class="av-up-icon">📷</span><span class="av-up-lbl">Upload photo</span>`;
+    e.innerHTML = `<span class="av-up-lbl">Upload photo</span>`;
   }
 }
 function handleAvUpload(e) {
@@ -1771,7 +1771,6 @@ function copyToClip(t) {
 function openModal(id) {
   const el = document.getElementById(id);
   if (el) el.classList.add("open");
-}
 }
 function closeModal(id) {
   const el = document.getElementById(id);
