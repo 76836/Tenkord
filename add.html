@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Add friend — Tenkord</title>
 <meta name="theme-color" content="#f5c400">
-<link rel="stylesheet" href="tenkord-v3.css?v=15">
+<link rel="stylesheet" href="tenkord-v3.css?v=13">
 <style>
   body { display:flex; align-items:center; justify-content:center; min-height:100dvh; padding:24px; }
   .card {
@@ -74,7 +74,7 @@ function goAdd() {
   const bytes = new TextEncoder().encode(peer);
   let bin = "";
   bytes.forEach(b => bin += String.fromCharCode(b));
-  const b64 = btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const b64 = btoa(bin).replace(/[+]/g, "-").replace(/[/]/g, "_").replace(/=+$/, "");
   location.href = "./index.html?id=" + encodeURIComponent(b64);
 }
 </script>
