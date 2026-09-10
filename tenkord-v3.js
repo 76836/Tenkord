@@ -230,6 +230,7 @@ const S = {
   myName: lsGet("tk_name", ""),
   myStatus: lsGet("tk_status", ""),
   myAvatar: lsGet("tk_avatar", ""),
+  myBanner: lsGet("tk_banner", ""),
   deviceId: lsGet("tk_device_id", "") || (() => {
     const id = uuid();
     localStorage.setItem("tk_device_id", id);
@@ -1411,18 +1412,15 @@ function updateTopBar() {
   if (idel) idel.textContent = S.myId || "connecting...";
   const av = document.getElementById("ub-av");
   if (av) {
-    if (S.myAvatar && (S.myAvatar.startsWith("data:") || S.myAvatar.startsWith("http"))) {
-      av.innerHTML = `<img src="${S.myAvatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover"><span class="sdot online"></span>`;
-    } else if (S.myAvatar) {
-      av.innerHTML = S.myAvatar + '<span class="sdot online"></span>';
-    }
+    av.innerHTML = avHTML(S.myAvatar) + '<span class="sdot online"></span>';
   }
   const pp = document.getElementById("pp-id");
   const share = document.getElementById("pp-share-id");
   if (pp) pp.textContent = S.myId || "";
   if (share) share.textContent = S.myId || "";
   const linkTxt = document.getElementById("my-link-txt");
-  if (linkTxt) linkTxt.textContent = S.myId ? `tenkord://peer/${S.myId}` : "loading...";
+  if (linkTxt) linkTxt.textContent = S.myId ? inviteUrlFor(S.myId) : "loading...";
+  refreshYouCard();
 }
 
 function renderFriendPanel() {
@@ -1430,18 +1428,16 @@ function renderFriendPanel() {
   if (!panel) return;
   const entries = Object.entries(S.friends);
   if (!entries.length) {
-    panel.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px;text-align:center">No friends yet.<br>Tap + to add someone.</div>';
+    panel.innerHTML = '<div class="empty-rail">No friends yet.<br>Use + to add someone.</div>';
     return;
   }
   panel.innerHTML = entries.map(([id, f]) => {
-    const unread = f.unread ? `<span class="unread-badge">${f.unread}</span>` : "";
-    const online = f.online ? "online" : "offline";
-    const av = f.avatar && (f.avatar.startsWith("data:") || f.avatar.startsWith("http"))
-      ? `<img src="${f.avatar}">` : (f.avatar || "👤");
-    return `<div class="friend-item" onclick="openChat('${id}')" oncontextmenu="showCtx(event,'${id}')">
-      <div class="av">${av}<span class="sdot ${online}"></span></div>
-      <div class="fi-info"><div class="fi-name">${esc(f.name || id.slice(-8))}${unread}</div>
-      <div class="fi-last">${esc(f.lastMsg || "")}</div></div></div>`;
+    const unread = f.unread ? `<span class="fi-unread">${f.unread}</span>` : "";
+    const online = f.online ? "online" : "";
+    return `<div class="friend-item" onclick="openChat('${id}')" oncontextmenu="showCtx(event,'${id}');return false;">
+      <div class="av">${avHTML(f.avatar)}<span class="sdot ${online}"></span></div>
+      <div class="fi-name">${esc(f.name || id.slice(-8))}</div>${unread}
+    </div>`;
   }).join("");
 }
 
@@ -1452,46 +1448,48 @@ function renderFriendsHome() {
   if (S.fhTab === "online") list = list.filter(([, f]) => f.online);
   if (S.fhTab === "pending") list = list.filter(([, f]) => f.pending);
   if (!list.length) {
-    body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted);font-size:13px">Nothing here yet</div>';
+    body.innerHTML = '<div class="empty">Nothing here yet</div>';
     return;
   }
   body.innerHTML = list.map(([id, f]) => {
-    const av = f.avatar && (f.avatar.startsWith("data:") || f.avatar.startsWith("http"))
-      ? `<img src="${f.avatar}">` : (f.avatar || "👤");
     return `<div class="friend-row" onclick="openChat('${id}')">
-      <div class="av">${av}<span class="sdot ${f.online ? "online" : "offline"}"></span></div>
+      <div class="av">${avHTML(f.avatar)}<span class="sdot ${f.online ? "online" : ""}"></span></div>
       <div class="fr-info"><div class="fr-name">${esc(f.name || id.slice(-8))}</div>
       <div class="fr-status">${esc(f.status || (f.online ? "Online" : "Offline"))}</div></div>
-      ${f.pending ? '<button class="btn btn-sm" onclick="event.stopPropagation();acceptFriend(\'' + id + '\')">Accept</button>' : ""}
+      ${f.pending ? '<button class="btn sm" onclick="event.stopPropagation();acceptFriend(\'' + id + '\')">Accept</button>' : ""}
     </div>`;
   }).join("");
 }
 
 function setFhTab(tab, el) {
   S.fhTab = tab;
-  document.querySelectorAll(".fh-tab").forEach(t => t.classList.remove("active"));
-  el.classList.add("active");
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  if (el) el.classList.add("active");
+  else document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add("active");
   renderFriendsHome();
 }
 
 function renderMembers() {
-  const on = document.getElementById("mp-on");
-  const off = document.getElementById("mp-off");
-  if (!on || !off) return;
+  const onCount = document.getElementById("mp-on");
+  const offCount = document.getElementById("mp-off");
+  const onList = document.getElementById("mp-online-list");
+  const offList = document.getElementById("mp-offline-list");
   const online = [], offline = [];
   Object.entries(S.friends).forEach(([id, f]) => {
     (f.online ? online : offline).push({ id, f });
   });
-  // also show self
-  online.unshift({ id: S.myId, f: { name: S.myName + " (you)", avatar: S.myAvatar, online: true } });
-  on.innerHTML = online.map(({ id, f }) => memberRow(id, f)).join("") || '<div class="mp-empty">Nobody online</div>';
-  off.innerHTML = offline.map(({ id, f }) => memberRow(id, f)).join("") || '<div class="mp-empty">—</div>';
+  online.unshift({ id: S.myId, f: { name: (S.myName || "You") + " (you)", avatar: S.myAvatar, online: true } });
+  if (onCount) onCount.textContent = String(online.length);
+  if (offCount) offCount.textContent = String(offline.length);
+  if (onList) onList.innerHTML = online.map(({ id, f }) => memberRow(id, f)).join("") || "";
+  if (offList) offList.innerHTML = offline.map(({ id, f }) => memberRow(id, f)).join("") || "";
 }
 
 function memberRow(id, f) {
-  const av = f.avatar && (f.avatar.startsWith("data:") || f.avatar.startsWith("http"))
-    ? `<img src="${f.avatar}">` : (f.avatar || "👤");
-  return `<div class="mp-item" onclick="openFriendProfile('${id}')"><div class="av sm">${av}<span class="sdot ${f.online ? "online" : "offline"}"></span></div><span>${esc(f.name || id.slice(-8))}</span></div>`;
+  return `<div class="member-row" onclick="openFriendProfile('${id}')">
+    <div class="av">${avHTML(f.avatar)}<span class="sdot ${f.online ? "online" : ""}"></span></div>
+    <span>${esc(f.name || (id || "").slice(-8))}</span>
+  </div>`;
 }
 
 function renderDeviceList() {
@@ -1507,6 +1505,21 @@ function renderDeviceList() {
      <span>${esc(d.name || d.deviceId.slice(-6))} ${d.online ? "(online)" : "(offline)"}</span>
      <span style="font-size:10px;color:var(--muted)">${d.appVersion || ""}</span></div>`
   ).join("");
+}
+
+function avHTML(avatar) {
+  if (avatar && (String(avatar).startsWith("data:") || String(avatar).startsWith("http") || String(avatar).startsWith("blob:"))) {
+    return `<img src="${avatar}" alt="">`;
+  }
+  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" opacity="0.5"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>`;
+}
+
+
+function inviteUrlFor(id) {
+  if (!id) return "";
+  const b64 = btoa(unescape(encodeURIComponent(id))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const base = (location.origin + location.pathname).replace(/\/index\.html$/, "/").replace(/\/?$/, "/");
+  return base + "add.html?id=" + b64;
 }
 
 function esc(s) {
@@ -1717,35 +1730,130 @@ function pickEmoji(t) {
 function refreshAvPreview() {
   const e = document.getElementById("av-preview");
   if (!e) return;
-  if (S.myAvatar && (S.myAvatar.startsWith("data:") || S.myAvatar.startsWith("http"))) {
-    e.innerHTML = `<img src="${S.myAvatar}">`;
-  } else {
-    e.innerHTML = `<span class="av-up-lbl">Upload photo</span>`;
+  e.innerHTML = avHTML(S.myAvatar);
+}
+async function processProfileMedia(file, kind) {
+  const MAX = 5 * 1024 * 1024;
+  if (!file) return null;
+  if (file.size > MAX && !file.type.startsWith("image/")) {
+    toast("Max 5 MB for GIF/video");
+    return null;
+  }
+  // GIF: keep if under 5MB
+  if (file.type === "image/gif") {
+    if (file.size > MAX) { toast("GIF must be under 5 MB"); return null; }
+    return await readAsDataURL(file);
+  }
+  // Video: sample frames into a short animated-ish JPEG sequence is heavy;
+  // for now convert first frame to image and note user — prefer GIF upload.
+  if (file.type.startsWith("video/")) {
+    if (file.size > MAX) { toast("Video must be under 5 MB"); return null; }
+    try {
+      return await videoToGifDataURL(file, kind === "banner" ? 480 : 128);
+    } catch (err) {
+      console.warn(err);
+      toast("Could not convert video");
+      return null;
+    }
+  }
+  // Photos: compress / resize
+  if (file.type.startsWith("image/")) {
+    return await compressImage(file, kind === "banner" ? 960 : 256, kind === "banner" ? 0.82 : 0.85);
+  }
+  toast("Unsupported file type");
+  return null;
+}
+
+function readAsDataURL(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+function compressImage(file, maxSide, quality) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        const scale = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.round(w * scale); h = Math.round(h * scale);
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        res(c.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = rej;
+      img.src = r.result;
+    };
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+async function videoToGifDataURL(file, maxSide) {
+  // Extract a still (poster) for now — full client-side gif encode is heavy.
+  // Store as compressed JPEG poster; mark type in metadata via data URL.
+  const url = URL.createObjectURL(file);
+  try {
+    const video = document.createElement("video");
+    video.muted = true; video.playsInline = true; video.src = url;
+    await new Promise((r, j) => { video.onloadeddata = r; video.onerror = j; });
+    video.currentTime = Math.min(0.1, (video.duration || 1) * 0.1);
+    await new Promise(r => { video.onseeked = r; });
+    const w0 = video.videoWidth || maxSide, h0 = video.videoHeight || maxSide;
+    const scale = Math.min(1, maxSide / Math.max(w0, h0));
+    const c = document.createElement("canvas");
+    c.width = Math.round(w0 * scale); c.height = Math.round(h0 * scale);
+    c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.85);
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
-function handleAvUpload(e) {
+
+async function handleAvUpload(e) {
   const f = e.target.files[0];
+  e.target.value = "";
   if (!f) return;
-  const r = new FileReader();
-  r.onload = (ev) => {
-    const img = new Image();
-    img.onload = () => {
-      const c = document.createElement("canvas");
-      c.width = 128; c.height = 128;
-      const ctx = c.getContext("2d");
-      const n = Math.min(img.width, img.height);
-      const a = (img.width - n) / 2;
-      const b = (img.height - n) / 2;
-      ctx.drawImage(img, a, b, n, n, 0, 0, 128, 128);
-      S.myAvatar = c.toDataURL("image/jpeg", 0.85);
-      localStorage.setItem("tk_avatar", S.myAvatar);
-      refreshAvPreview();
-      updateTopBar();
-    };
-    img.src = ev.target.result;
-  };
-  r.readAsDataURL(f);
+  const data = await processProfileMedia(f, "avatar");
+  if (!data) return;
+  S.myAvatar = data;
+  localStorage.setItem("tk_avatar", data);
+  refreshAvPreview();
+  updateTopBar();
+  renderMembers();
+  toast("Avatar updated");
 }
+
+async function handleBannerUpload(e) {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  const data = await processProfileMedia(f, "banner");
+  if (!data) return;
+  S.myBanner = data;
+  localStorage.setItem("tk_banner", data);
+  refreshBannerPreview();
+  toast("Banner updated");
+}
+
+function refreshBannerPreview() {
+  const el = document.getElementById("banner-preview");
+  if (!el) return;
+  if (S.myBanner) {
+    el.style.backgroundImage = `url(${S.myBanner})`;
+    el.classList.add("has-banner");
+  } else {
+    el.style.backgroundImage = "";
+    el.classList.remove("has-banner");
+  }
+}
+
 
 async function saveProfile() {
   S.myName = document.getElementById("p-name")?.value.trim() || S.myName;
@@ -1753,26 +1861,41 @@ async function saveProfile() {
   localStorage.setItem("tk_name", S.myName);
   localStorage.setItem("tk_status", S.myStatus);
   updateTopBar();
-  // broadcast profile to friends + linked devices
-  const ts = Date.now().toString();
-  const sig = await CRYPTO.sign(S.myId + ts);
-  const msg = {
-    type: "profile-update", v: PROTOCOL_VERSION,
-    name: S.myName, avatar: S.myAvatar, status: S.myStatus, ts, sig
-  };
-  Object.values(S.conns).forEach(c => send(c, msg));
-  // also re-handshake style for discovery
+  refreshYouCard();
+  renderMembers();
+  // broadcast profile update to online friends
+  try {
+    const ts = Date.now().toString();
+    const sig = await CRYPTO.sign(S.myId + ts);
+    const pkt = { type: "profile", v: PROTOCOL_VERSION, id: S.myId, name: S.myName, avatar: S.myAvatar, banner: S.myBanner, status: S.myStatus, ts, sig };
+    Object.values(S.conns || {}).forEach(c => { if (c?.open) send(c, pkt); });
+  } catch (_) {}
   toast("Profile saved");
-  closeModal("profile-modal");
-  renderQR();
 }
+
+function refreshYouCard() {
+  const n = document.getElementById("you-display-name");
+  const s = document.getElementById("you-display-status");
+  if (n) n.textContent = S.myName || "Set your name";
+  if (s) s.textContent = S.myStatus || "";
+  refreshAvPreview();
+  refreshBannerPreview();
+  const sav = document.getElementById("settings-av-preview");
+  if (sav) sav.innerHTML = avHTML(S.myAvatar);
+  const sb = document.getElementById("settings-banner-preview");
+  if (sb && S.myBanner) {
+    sb.style.backgroundImage = `url(${S.myBanner})`;
+    sb.classList.add("has-banner");
+  }
+}
+
 
 function renderQR() {
   const cont = document.getElementById("qr-cont");
   if (!cont || !S.myId || typeof QRCode === "undefined") return;
   cont.innerHTML = "";
   new QRCode(cont, {
-    text: "tenkord://peer/" + S.myId,
+    text: inviteUrlFor(S.myId),
     width: 160,
     height: 160,
     colorDark: "#f5c400",
@@ -1786,7 +1909,7 @@ function copyMyId() {
 }
 function copyMyInviteLink() {
   if (!S.myId) return;
-  navigator.clipboard.writeText("tenkord://peer/" + S.myId).then(() => toast("Invite link copied"));
+  navigator.clipboard.writeText(inviteUrlFor(S.myId)).then(() => toast("Invite link copied"));
 }
 function copyToClip(t) {
   navigator.clipboard.writeText(t).then(() => toast("Copied"));
@@ -2093,7 +2216,9 @@ function closeAttachMenu() {
 }
 function triggerFileInput(id) {
   closeAttachMenu();
-  document.getElementById(id)?.click();
+  const el = document.getElementById(id || "file-input");
+  if (el) el.click();
+  else toast("File input missing");
 }
 function ensureActiveChatForAttachment() {
   if (!S.activeChat) {
@@ -2127,11 +2252,30 @@ async function boot() {
     await openDB();
     await initPeer();
     updateTopBar();
+    refreshYouCard();
     renderFriendPanel();
     renderFriendsHome();
     renderMembers();
     buildEmojiStrip();
     // hide loader after a short moment if still showing
+    
+  // Invite link: ?id=base64 peer id → open add friend
+  try {
+    const q = new URLSearchParams(location.search);
+    const raw = q.get("id");
+    if (raw) {
+      let peer = raw;
+      try { peer = decodeURIComponent(escape(atob(raw.replace(/-/g, "+").replace(/_/g, "/")))); } catch(_) {}
+      if (peer && peer.startsWith("tk-")) {
+        setTimeout(() => {
+          openModal("add-friend-modal");
+          const inp = document.getElementById("af-id-input");
+          if (inp) inp.value = peer;
+        }, 800);
+      }
+    }
+  } catch(_) {}
+
     setTimeout(() => setLoader(false), 1500);
   } catch (e) {
     console.error("Boot failed", e);
@@ -2155,7 +2299,7 @@ Object.assign(window, {
   toggleFavorite, removeFavorite, sendFavorite, downloadFile,
   openIdentityExportModal, triggerIdentityImportFile, handleIdentityImportFile,
   confirmIdentityPass, closeIdentityPassModal, toggleFileSyncSetting, toggleLargeSkip,
-  requestHistoryFromFriend, pickEmoji, handleAvUpload, clearQueue, clearReply, clearEdit,
+  requestHistoryFromFriend, pickEmoji, handleAvUpload, handleBannerUpload, clearQueue, clearReply, clearEdit,
   openFriendProfile, openLightbox, closeLightbox, acceptFriend, showCtx, showMsgCtx,
   setReply, deleteMsg
 });

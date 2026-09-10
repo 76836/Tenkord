@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Add friend — Tenkord</title>
+<meta name="theme-color" content="#f5c400">
+<link rel="stylesheet" href="tenkord-v3.css?v=13">
+<style>
+  body { display:flex; align-items:center; justify-content:center; min-height:100dvh; padding:24px; }
+  .card {
+    width: min(400px, 100%); background: var(--bg-2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 28px 24px; text-align: center;
+  }
+  .card h1 {
+    font-family: var(--font-ui); font-weight: 800; letter-spacing: 0.12em;
+    color: var(--accent); font-size: 1.4rem; margin-bottom: 8px;
+  }
+  .card p { color: var(--text-muted); margin-bottom: 16px; line-height: 1.45; }
+  .peer {
+    font-family: var(--font-mono); font-size: 0.8rem; word-break: break-all;
+    background: var(--bg-0); padding: 12px; border-radius: 8px; margin-bottom: 20px;
+    color: var(--text);
+  }
+  .actions { display: flex; flex-direction: column; gap: 10px; }
+  .err { color: var(--danger); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>TENKORD</h1>
+    <p>Someone shared a friend invite with you.</p>
+    <div id="err" class="err hidden"></div>
+    <div class="peer" id="peer">…</div>
+    <div class="actions">
+      <button class="btn primary" id="btn-add" onclick="goAdd()">Add friend in Tenkord</button>
+      <button class="btn" onclick="window.close()">Close tab</button>
+    </div>
+  </div>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  let raw = params.get("id") || "";
+  let peer = "";
+  try {
+    peer = decodeURIComponent(escape(atob(raw.replace(/-/g, "+").replace(/_/g, "/"))));
+  } catch (e) {
+    try { peer = atob(raw); } catch (_) { peer = raw; }
+  }
+  const el = document.getElementById("peer");
+  const err = document.getElementById("err");
+  if (!peer || !/^tk-[a-f0-9]+$/i.test(peer)) {
+    err.textContent = "Invalid or missing invite id.";
+    err.classList.remove("hidden");
+    document.getElementById("btn-add").disabled = true;
+    el.textContent = raw || "(none)";
+  } else {
+    el.textContent = peer;
+  }
+  window._peer = peer;
+})();
+function goAdd() {
+  const peer = window._peer;
+  if (!peer) return;
+  const b64 = btoa(unescape(encodeURIComponent(peer))).replace(/+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  // Open main app with query so it pre-fills add-friend
+  location.href = "./index.html?id=" + encodeURIComponent(b64);
+}
+</script>
+</body>
+</html>

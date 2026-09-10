@@ -514,3 +514,52 @@ a { color: var(--accent); }
 @media (min-width: 641px) {
   .back-btn { display: none; }
 }
+
+/* You / profile card */
+.you-card { overflow: hidden; }
+.you-banner {
+  height: 120px; background: linear-gradient(135deg, #2a2a20, #1a1a12 60%, #0a0a0a);
+  background-size: cover; background-position: center;
+}
+.you-banner.has-banner { background-color: var(--bg-3); }
+.you-av-wrap {
+  display: flex; justify-content: center; margin-top: -40px; position: relative; z-index: 1;
+}
+.you-av-wrap .av.large {
+  border: 4px solid var(--bg-2); margin: 0;
+}
+.you-name { text-align: center; font-weight: 700; font-size: 1.25rem; margin-top: 8px; }
+.you-status { text-align: center; color: var(--text-muted); font-size: 0.9rem; }
+.you-id {
+  display: block; text-align: center; font-family: var(--font-mono);
+  font-size: 0.75rem; color: var(--text-dim); margin: 8px 0 12px;
+  word-break: break-all;
+}
+.settings-section {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted);
+  margin: 16px 0 8px; padding-top: 8px; border-top: 1px solid var(--border);
+}
+.media-row { display: flex; align-items: center; gap: 12px; }
+.banner-edit {
+  height: 80px; border-radius: var(--radius); border: 1px dashed var(--border);
+  background: var(--bg-0) center/cover no-repeat;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); cursor: pointer; font-size: 0.85rem;
+}
+.banner-edit.has-banner span { background: rgba(0,0,0,0.55); padding: 4px 10px; border-radius: 4px; color: #fff; }
+.banner-edit:hover { border-color: var(--accent-dim); }
+
+.friend-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--radius); cursor: pointer;
+}
+.friend-row:hover { background: var(--bg-hover); }
+.fr-info { flex: 1; min-width: 0; }
+.fr-name { font-weight: 600; }
+.fr-status { font-size: 0.8rem; color: var(--text-muted); }
+.empty-rail {
+  padding: 24px 12px; text-align: center; color: var(--text-dim);
+  font-size: 0.85rem; line-height: 1.5;
+}
+.fi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

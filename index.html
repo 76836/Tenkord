@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Tenkord">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="tenkord-v3.css?v=12">
+<link rel="stylesheet" href="tenkord-v3.css?v=13">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -174,23 +174,53 @@
   </div>
 </div>
 
+
 <div class="modal" id="profile-modal">
-  <div class="modal-card">
-    <div class="modal-hdr"><h2>Profile</h2><button class="icon-btn" onclick="closeModal('profile-modal')"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></div>
+  <div class="modal-card you-card">
+    <div class="modal-hdr"><h2>You</h2><button class="icon-btn" onclick="closeModal('profile-modal')"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></div>
+    <div class="you-banner" id="banner-preview"></div>
+    <div class="you-av-wrap"><div class="av large" id="av-preview"></div></div>
     <div class="modal-body">
-      <div class="av large" id="av-preview"></div>
-      <div id="av-emoji-strip" class="emoji-strip"></div>
+      <div class="you-name" id="you-display-name">Set your name</div>
+      <div class="you-status" id="you-display-status"></div>
+      <code class="you-id" id="pp-id"></code>
+      <button class="btn primary" onclick="closeModal('profile-modal');openModal('settings-modal')">Settings</button>
+      <button class="btn" onclick="copyMyId()">Copy Peer ID</button>
+      <button class="btn" onclick="copyMyInviteLink()">Copy invite link</button>
+      <div class="id-row"><code id="my-link-txt"></code></div>
+      <div class="id-row hidden"><code id="pp-share-id"></code></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="settings-modal">
+  <div class="modal-card">
+    <div class="modal-hdr"><h2>Settings</h2><button class="icon-btn" onclick="closeModal('settings-modal')"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></div>
+    <div class="modal-body">
+      <div class="settings-section">Profile</div>
       <label>Display name</label>
       <input id="p-name" placeholder="Your name">
       <label>Status</label>
       <input id="p-status" placeholder="What's up?">
-      <label>Your Peer ID</label>
-      <div class="id-row"><code id="pp-id"></code><button class="btn sm" onclick="copyMyId()">Copy</button></div>
-      <div class="id-row"><code id="my-link-txt"></code><button class="btn sm" onclick="copyMyInviteLink()">Copy link</button></div>
-      <div class="id-row"><code id="pp-share-id"></code></div>
+      <label>Avatar (image / GIF / short video, max 5 MB)</label>
+      <div class="media-row">
+        <div class="av" id="settings-av-preview"></div>
+        <button class="btn sm" onclick="document.getElementById('av-file-input').click()">Change avatar</button>
+        <input type="file" id="av-file-input" class="hidden" accept="image/*,video/*" onchange="handleAvUpload(event)">
+      </div>
+      <label>Banner (image / GIF / short video, max 5 MB)</label>
+      <div class="banner-edit" id="settings-banner-preview" onclick="document.getElementById('banner-file-input').click()">
+        <span>Change banner</span>
+      </div>
+      <input type="file" id="banner-file-input" class="hidden" accept="image/*,video/*" onchange="handleBannerUpload(event)">
+      <div id="av-emoji-strip" class="emoji-strip hidden"></div>
+      <button class="btn primary" onclick="saveProfile();closeModal('settings-modal')">Save profile</button>
+
+      <div class="settings-section">Sync</div>
       <label class="check"><input type="checkbox" id="toggle-file-sync" onchange="toggleFileSyncSetting()"> Sync files to linked devices</label>
       <label class="check"><input type="checkbox" id="toggle-large-skip" onchange="toggleLargeSkip()"> Skip very large files</label>
-      <button class="btn primary" onclick="saveProfile()">Save</button>
+
+      <div class="settings-section">Identity</div>
       <button class="btn" onclick="openIdentityExportModal()">Export identity</button>
       <button class="btn" onclick="triggerIdentityImportFile()">Import identity</button>
       <input type="file" id="identity-import-file" class="hidden" onchange="handleIdentityImportFile(event)">
@@ -263,6 +293,6 @@
   </button>
 </nav>
 
-<script src="tenkord-v3.js?v=12"></script>
+<script src="tenkord-v3.js?v=13"></script>
 </body>
 </html>
