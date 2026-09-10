@@ -612,4 +612,14 @@ async function syncWithOwnDevice(peerId) {
   });
 }
 
-// The rest of the file continues with handleSyncRequest, file transfer, UI, boot, etc. (exact prefix of the full rewrite)
+async function handleSyncRequest(from, data) {
+  const known = new Set(data.knownIds || []);
+  const msgs = await dbGetAll("messages", "chat", from);
+  const missing = msgs.filter(m => !known.has(m.id));
+  for (const m of missing) {
+    send(S.conns[from], { type: "sync-msg", v: PROTOCOL_VERSION, msg: m });
+  }
+  send(S.conns[from], { type: "sync-done", v: PROTOCOL_VERSION });
+}
+
+// CONTINUED IN NEXT PROGRESSIVE WRITE - this is exact prefix of the full rewrite
