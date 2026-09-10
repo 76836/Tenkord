@@ -1430,7 +1430,7 @@ function renderFriendPanel() {
   if (!panel) return;
   const entries = Object.entries(S.friends);
   if (!entries.length) {
-    panel.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px;text-align:center">No friends yet.<br>Tap ➕ to add someone.</div>';
+    panel.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px;text-align:center">No friends yet.<br>Tap + to add someone.</div>';
     return;
   }
   panel.innerHTML = entries.map(([id, f]) => {
@@ -1640,20 +1640,44 @@ function renderMobMembers() {
 }
 
 function mobNav(tab) {
-  if (tab === "home") {
-    switchView("home");
-    setMobTab("home");
+  const rail = document.getElementById("rail");
+  document.querySelectorAll(".mob-nav-btn").forEach(e => e.classList.remove("active"));
+  const btn = document.getElementById("mob-tab-" + (tab === "friends" ? "friends" : tab === "profile" ? "profile" : "home"));
+  if (btn) btn.classList.add("active");
+
+  if (tab === "home" || tab === "chats") {
+    if (rail) rail.classList.remove("mobile-open");
+    // show friends home or current chat
+    const cv = document.getElementById("chat-view");
+    const fh = document.getElementById("friends-home");
+    if (S.activeChat && cv) {
+      cv.classList.add("active");
+      if (fh) fh.classList.remove("active");
+    } else {
+      if (fh) fh.classList.add("active");
+      if (cv) cv.classList.remove("active");
+    }
+  } else if (tab === "friends") {
+    if (rail) rail.classList.add("mobile-open");
+    const fh = document.getElementById("friends-home");
+    const cv = document.getElementById("chat-view");
+    if (fh) fh.classList.add("active");
+    if (cv) cv.classList.remove("active");
+  } else if (tab === "profile") {
+    if (rail) rail.classList.remove("mobile-open");
+    openModal("profile-modal");
   }
 }
 function setMobTab(tab) {
-  document.querySelectorAll(".mob-nav-item").forEach(e => e.classList.remove("active"));
-  if (tab === "home") document.getElementById("mob-tab-home")?.classList.add("active");
+  document.querySelectorAll(".mob-nav-btn").forEach(e => e.classList.remove("active"));
+  const map = { home: "mob-tab-home", friends: "mob-tab-friends", profile: "mob-tab-profile" };
+  document.getElementById(map[tab] || "mob-tab-home")?.classList.add("active");
 }
 function switchView(v) {
   S.view = v;
   if (v === "home") {
-    showFriendsHome();
-    closeActiveChat();
+    if (typeof showFriendsHome === "function") showFriendsHome();
+    if (typeof closeActiveChat === "function") closeActiveChat();
   }
 }
 
